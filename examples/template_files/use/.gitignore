@@ -1,0 +1,4 @@
+with_outputfile.rpack.lock.yaml
+.rpack.d/
+AUTHORS.md
+*.rpack.lock.yaml

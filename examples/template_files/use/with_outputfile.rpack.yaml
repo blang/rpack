@@ -1,0 +1,7 @@
+"@schema_version": "v1"
+source: "../rpackdef"
+config: 
+  values:
+    output_file: "AUTHORS.md"
+  inputs:
+    "authors.yaml": ./authors.yaml

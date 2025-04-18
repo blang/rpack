@@ -1,0 +1,13 @@
+- firstname: Alice
+  lastname: Johnson
+  email: alice.johnson@example.com
+- firstname: Bob
+  lastname: Smith
+- firstname: Charlie
+  lastname: Brown
+  email: charlie.brown@example.org
+- firstname: Dana
+  lastname: White
+  email: dana.white@example.com
+- firstname: Eva
+  lastname: Green

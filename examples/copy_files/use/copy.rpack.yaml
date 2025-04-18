@@ -1,0 +1,13 @@
+"@schema_version": "v1"
+source: "../rpackdef"
+config: 
+  values:
+    copy_file1: true
+    copy_file2: false
+    copy_inputfile1: true
+    copy_inputdir1:
+      enabled: true
+      recursive: true
+  inputs:
+    inputfile1: ./inputfile.yaml
+    inputdir1: ./inputdir

@@ -1,0 +1,5 @@
+# This file is from the rpackdef
+description: "Interesting file"
+users:
+  - alice
+  - bob

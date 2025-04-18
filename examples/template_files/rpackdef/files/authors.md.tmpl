@@ -1,0 +1,4 @@
+# Authors
+{{ range . -}}
+- {{ .firstname }} {{.lastname}} {{ if .email }}<<{{ .email }}>>{{ end }}
+{{ end -}}

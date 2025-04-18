@@ -1,0 +1,5 @@
+"@schema_version": "v1"
+name: "basic"
+inputs:
+  - name: userlist
+    type: file

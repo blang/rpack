@@ -1,0 +1,1 @@
+# Templating settingsbot config

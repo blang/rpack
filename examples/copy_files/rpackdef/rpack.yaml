@@ -1,0 +1,9 @@
+"@schema_version": "v1"
+name: "copy_files"
+inputs:
+  - name: inputfile1
+    type: file
+  - name: inputdir1
+    type: dir
+# values:
+#   output_file: "./AUTHORS.md"

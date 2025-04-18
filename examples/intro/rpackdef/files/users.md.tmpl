@@ -1,0 +1,9 @@
+# RPack users
+
+## Author
+{{ .author }}
+
+## Users
+{{ range .users -}}
+- {{ .firstname }} {{.lastname}} {{ if .email }}<<{{ .email }}>>{{ end }}
+{{ end -}}

@@ -23,6 +23,7 @@ ld_flags := "-s -w \
 root_dir := justfile_directory()
 bin_dir := root_dir + "/bin"
 dist_dir := root_dir + "/dist"
+dist_name := "dist"
 
 default: build
 
@@ -68,7 +69,7 @@ build platform="linux/amd64/-":
     os=$(echo $platform | cut -d/ -f1)
     arch=$(echo $platform | cut -d/ -f2)
     arm=$(echo $platform | cut -d/ -f3)
-    output="{{dist_dir}}/rpack-${os}-${arch}"
+    output="{{dist_name}}/rpack-${os}-${arch}"
 
     CGO_ENABLED="0" GOOS=$os GOARCH=$arch $([ "$arm" != "-" ] && echo "GOARM=$arm") \
     go build \
@@ -87,6 +88,7 @@ build-all:
         os=$(echo $platform | cut -d/ -f1)
         arch=$(echo $platform | cut -d/ -f2)
         arm=$(echo $platform | cut -d/ -f3)
+        binary="rpack-${os}-${arch}" 
         output="{{dist_dir}}/rpack-${os}-${arch}"
         
         CGO_ENABLED=0 GOOS=$os GOARCH=$arch $([ "$arm" != "-" ] && echo "GOARM=$arm") \
@@ -95,6 +97,6 @@ build-all:
             -o "$output" \
             ./cmd/rpack
         
-        tar czf "$output.tar.gz" "$output"
+        tar -C "{{dist_dir}}" -czf "$output.tar.gz" "$binary"
     done
 

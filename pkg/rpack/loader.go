@@ -141,19 +141,25 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 		return nil, errors.Wrapf(err, "Could not setup temp path %s", packTempPath)
 	}
 
+	packageAddr, subDir, err := extractPackageAddrSubDir(ci.Config.Source)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Failed to extract package addr and subdir from source path: %s", ci.Config.Source)
+	}
+
 	slog.Debug("Load RPackDef", "source", packSourcePath, "dest", ci.Config.Source)
 	// Load RPackDef into source folder
 	client := &getter.Client{
-		Src:     ci.Config.Source,
-		Dst:     packSourcePath,
-		Dir:     true,
-		Options: []getter.ClientOption{getter.WithMode(getter.ClientModeDir)},
-		Pwd:     execPath,
+		Src:  packageAddr,
+		Dst:  packSourcePath,
+		Mode: getter.ClientModeDir,
+		Pwd:  execPath,
 	}
 	err = client.Get()
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not get source %q", ci.Config.Source)
 	}
+
+	packSourcePath = filepath.Join(packSourcePath, subDir)
 
 	// TODO: Should we load the RPackDef here too?
 
@@ -172,6 +178,20 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 		SourcePath:     packSourcePath,
 		ResolvedInputs: resolvedInputs,
 	}, nil
+}
+
+func extractPackageAddrSubDir(src string) (string, string, error) {
+	result, err := getter.Detect(src, "", getter.Detectors)
+	if err != nil {
+		return "", "", errors.Wrap(err, "Go getter detection failed")
+	}
+	slog.Debug("Detect source", "result", result)
+
+	packageAddr, subDir := getter.SourceDirSubdir(result)
+	if subDir != "" {
+		subDir = filepath.Clean(subDir)
+	}
+	return packageAddr, subDir, nil
 }
 
 const (

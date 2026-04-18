@@ -1,7 +1,7 @@
-# Example: Template a file with input from yaml file
-This examples shows how to read data from a yaml file and use it to template a file written to the users destination.
+# Template files
 
-```
-cd ./use
-rpack run ./with_outputfile.rpack.yaml
+Reads a user-mapped YAML file and templates it into Markdown using Go `text/template`. Demonstrates `rpack.from_yaml`, `rpack.template`, and configurable output paths via values.
+
+```shell
+cd use && rpack run ./with_outputfile.rpack.yaml
 ```

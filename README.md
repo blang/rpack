@@ -1,71 +1,121 @@
 # RPack
 
-RPack is a package manager for files, a tool for distributing versioned packs of files/configuration with advanced templating and scripting.
+A package manager for files — distribute versioned bundles of templated files with Lua scripting.
+
+Think [Helm](https://helm.sh/) for arbitrary files, [vendir](https://carvel.dev/vendir/) with templating, or [kustomize](https://github.com/kubernetes-sigs/kustomize) but scriptable.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/blang/rpack.svg)](https://pkg.go.dev/github.com/blang/rpack)
 [![Go Report Card](https://goreportcard.com/badge/github.com/blang/rpack)](https://goreportcard.com/report/github.com/blang/rpack)
 
-# Overview
+## Install
 
-Rpack enables you to bundle a set of files, together with configuration and advanced scripting and distribute them in a versioned bundle to users.
-The rpack then can be applied on the users side with values and file inputs and write a set of files.
+```
+go install github.com/blang/rpack/cmd/rpack@latest
+```
 
-- Think [helm chart](https://helm.sh/) for arbitrary files, with advanced scripting and access to read data from the users repository.
-- Think [vendir](https://carvel.dev/vendir/) with templating.
-- Think [kustomize](https://github.com/kubernetes-sigs/kustomize) but scriptable and as a versioned bundle.
+## Quick start
 
-Use cases include:
-- Distribute a common set of files (templated with user config) in a versioned fashion to all your repositories.
-- Make your dotfiles configurable and distribute them as a versioned package.
-- Package and distribute a set of files with configurable user values (github actions workflows, pre-commit config, ...)
-- Migrate any repository from one state to another in a deterministic and templated way.
-
-# Usage
-
-`example.rpack.yaml`:
-```yaml
+```shell
+# Create a config pointing to an rpack
+cat > example.rpack.yaml <<'EOF'
 "@schema_version": "v1"
-# Can be git, https, s3, and others
-source: "git::https://github.com/blang/rpack.git//examples/onlyexample/rpackdef"
+source: "git::https://github.com/blang/rpack.git//examples/intro/rpackdef"
 config:
-  # Config values determining how files are processed
   values:
     author: "blang"
-  # Give rpack access to users files and directories to read from
   inputs:
+    "users.yaml": ./myusers.yaml
+EOF
+
+# Dry-run to preview changes
+rpack run --dry-run ./example.rpack.yaml
+
+# Apply
+rpack run ./example.rpack.yaml
+```
+
+## Concepts
+
+### Execution model
+
+`rpack run` loads your config, fetches the rpack source, validates values/inputs against the definition's schema, executes the Lua script in a sandboxed filesystem, then writes output files and a lockfile.
+
+### Filesystem sandbox
+
+Scripts access files through four prefixes:
+
+| Prefix | Access | Description |
+|--------|--------|-------------|
+| `rpack:files/x` | Read-only | Files bundled in the rpack definition |
+| `map:name` | Read-only | User-mapped input files/dirs |
+| `temp:name` | Read/Write | Temporary files during execution |
+| `./path` | Write-only | Target directory (alongside the rpack.yaml) |
+
+Writes to `rpack:` or `map:` are blocked. Reads from the target directory are blocked (ensures purity — scripts can't read files they're about to overwrite).
+
+### Purity
+
+Scripts are pure: same inputs always produce same outputs. The executor detects read-after-write conflicts and fails if a script reads a file it previously wrote. This guarantees idempotent execution.
+
+### Lockfiles
+
+After execution, rpack writes a lockfile tracking all output files with SHA256 checksums. On subsequent runs, rpack verifies that managed files haven't been modified externally. Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
+
+## Configuration
+
+User configs are `*.rpack.yaml` files:
+
+```yaml
+"@schema_version": "v1"
+source: "git::https://github.com/user/repo//path/to/rpackdef"  # git, https, s3
+config:
+  values:          # Arbitrary data passed to the Lua script
+    author: "blang"
+  inputs:          # Map input names to local paths
     "users.yaml": ./myusers.yaml
 ```
 
-```shell
-# Execute the rpack on the directory of the rpack.yaml
-rpack run --dry-run ./example.rpack.yaml
-```
+## Lua API
 
-An rpack can write to any file or directory in the `rpack` directory, but is not allowed to read files that are not specified as inputs.
-You can use a dry-run to fully investigate which files change.
+The `rpack.v1` module is the scripting interface:
 
-# Features
-- Use Lua scripting to manipulate files
-- Clean upgrades with side-effect free (pure) templating: A second execution with same inputs will result in same output.
-- User-defined values in yaml, verifiable with [cuelang](https://cuelang.org/) schema (optional).
-- User-mapped files and directories: Files from the user can be read, copied and parsed (think helm values everywhere).
-- Lockfile enables side-effect free updates and detects manual changes.
-- Dry-run and transactional updates enables you to test updates and roll back side-effect free.
-- Read json and yaml and process them in lua, write them back in json, yaml or templated text.
-- Golang [`text/template`](https://pkg.go.dev/text/template) with any values and any source file.
+### File operations
 
-# Full example
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `read` | `read(path) → string` | Read file contents. Path uses sandbox prefixes. |
+| `write` | `write(path, content)` | Write string to target file. |
+| `copy` | `copy(src, dst)` | Copy file. Both paths use sandbox prefixes. |
+| `read_dir` | `read_dir(path, recursive?) → files, dirs` | List directory contents. Returns two tables. |
 
-In this basic example we:
-- copy a file from the bundled rpack to the users repo (`files/intro.md` -> `repo_intro.md`),
-- read a list of users from the users repo (`map:users.yaml`)
-- read the `author` value from the user supplied config values
-- use golang template on a file from the bundled rpack (`files/users.md.tmpl`) with the `author` value as well as the data from the `users.yaml`
-- write the output to a new file on the users repo (`./rpack_users.md`).
+### Data parsing
 
-See [examples/intro](./examples/intro) for the full example.
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `from_yaml` | `from_yaml(str) → table` | Parse YAML string to Lua table. |
+| `to_yaml` | `to_yaml(table) → string` | Serialize Lua table as YAML. |
+| `from_json` | `from_json(str) → table` | Parse JSON string to Lua table. |
+| `to_json` | `to_json(table) → string` | Serialize Lua table as JSON. |
 
-`./myrpack/rpack.yaml`:
+### Templating & queries
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `template` | `template(tmpl, data, leftDelim?, rightDelim?) → string` | Execute Go [`text/template`](https://pkg.go.dev/text/template) with data. Optional custom delimiters. |
+| `jq` | `jq(query, data) → table` | Execute [gojq](https://github.com/itchyny/gojq) query on data. |
+
+### External data
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `values` | `values() → table` | User-supplied config values. |
+| `inputs` | `inputs() → table` | List of user-supplied input names. |
+
+## Worked example
+
+**RPack bundle** (`rpackdef/`):
+
+`rpack.yaml` — declares inputs:
 ```yaml
 "@schema_version": "v1"
 name: "intro"
@@ -74,37 +124,38 @@ inputs:
     type: file
 ```
 
-`./myrpack/script.lua`:
+`script.lua` — processes files:
 ```lua
 local rpack = require("rpack.v1")
 local values = rpack.values()
 
--- Copy intro file from rpack to users repo
+-- Copy a bundled file to the target directory
 rpack.copy("rpack:files/intro.md", "./rpack_intro.md")
 
--- Read the user mapped file from its repo
+-- Read user input, template, and write output
 local users = rpack.from_yaml(rpack.read("map:users.yaml"))
-local data = {
-    users =  users,
+local output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), {
+    users = users,
     author = values.author,
-}
-
--- Template the rpacks users.md template with our data
-local tmpl_output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), data)
-
--- Write the template output to the users repo
-rpack.write("./rpack_users.md", tmpl_output)
+})
+rpack.write("./rpack_users.md", output)
 ```
 
-The `files/` directory contains the files `rpack_intro.md` and `users.md.tmpl`.
-That is all from the rpack bundle side! In the full example we also supplied a `cuelang` schema for validation, but this is optional.
+`schema.cue` (optional) — validates user values:
+```cue
+#Schema: {
+    author!: string
+}
+```
 
-**User side**
+`files/` — bundled templates and static files.
 
-`./testing/intro.rpack.yaml`:
+**User side**:
+
+`intro.rpack.yaml`:
 ```yaml
 "@schema_version": "v1"
-source: "../myrpack"
+source: "../rpackdef"
 config:
   values:
     author: blang
@@ -112,43 +163,47 @@ config:
     "users.yaml": ./myusers.yaml
 ```
 
-`./testing/myusers.yaml`:
-```yaml
-- firstname: Alice
-  lastname: Johnson
-  email: alice.johnson@example.com
-- firstname: Bob
-  lastname: Smith
-```
-
-Now the user can apply the rpack using:
 ```shell
-rpack run ./testing/intro.rpack.yaml
+rpack run ./intro.rpack.yaml
 ```
 
-This will create the files `rpack_intro.md` and `rpack_users.md` next to `intro.rpack.yaml`, as well as a lockfile.
+Creates `rpack_intro.md`, `rpack_users.md`, and a lockfile alongside the config.
 
-# More Examples
+## Creating an rpack
 
-Have a look at the [examples directory](./examples). They cover all potential aspects you will need as a user or rpack author.
+An rpack bundle is a directory containing:
 
-# State
+| File | Required | Description |
+|------|----------|-------------|
+| `rpack.yaml` | Yes | Name and input declarations. See [def_schema.cue](./pkg/rpack/def_schema.cue). |
+| `script.lua` | Yes | Lua script using `rpack.v1` API. |
+| `schema.cue` | No | CUE schema to validate user `values`. |
+| `files/` | No | Static files accessible via `rpack:` prefix. |
 
-This tool was just released as a beta version and will require further stabilization before becoming production ready. The API might change in this process. Use at your own risk and always execute rpacks only on version controlled directories.
+Distribute via git, https, or s3. See [examples/](./examples) for complete examples.
 
-# Creating an RPACK
+## CLI reference
 
-A `rpack` is a bundle of files, together with an optional schema for inputs and a script to perform file manipulation.
+### `rpack run <config>`
 
-This rpack can then be distributed to users in a versioned fashion (git, s3, https) and applied by the user to their own files.
+Execute an rpack.
 
-An rpack is a bundle of files in a directory:
-- `rpack.yaml`: The specification of values and inputs available to the user (see its [schema](./pkg/rpack/def_schema.cue))
-- `schema.cue`: A [cuelang](https://cuelang.org/) schema to validate the users values.
-- `script.lua`: The lua script used to perform file manipulation (see [available lua libaries](./lua/src)).
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--dry-run` | | Preview changes without writing files |
+| `--force` | `-f` | Overwrite files, ignore lockfile integrity warnings |
+| `--working-dir` | `-w` | Override working directory (default: config file location) |
+| `--debug` | | Enable verbose logging |
 
-See the [examples directory](./examples) for more details on the various aspects.
+### `rpack check <config>`
 
-# License
+Verify lockfile integrity — checks that all managed files exist and haven't been modified externally.
 
-RPack is released under the Apache 2.0 license. See [LICENSE.md](LICENSE.md)
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--working-dir` | `-w` | Override working directory |
+| `--debug` | | Enable verbose logging |
+
+## State
+
+Beta. API may change. Always run rpacks on version-controlled directories.

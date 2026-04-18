@@ -15,7 +15,7 @@ import (
 // and returns it as a hex string.
 func calculateSHA256(t *testing.T, filePath string) string {
 	t.Helper()
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) //nolint:gosec // test file
 	if err != nil {
 		t.Fatalf("Failed to read file %q: %v", filePath, err)
 	}
@@ -23,6 +23,7 @@ func calculateSHA256(t *testing.T, filePath string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
+//nolint:gocognit,gocyclo // test: table-driven test with many cases
 func TestRPackLockFileCheckIntegrity(t *testing.T) {
 	// Create a temporary directory to simulate the file structure.
 	tempDir := t.TempDir()
@@ -32,7 +33,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 		fileName := "valid.txt"
 		filePath := filepath.Join(tempDir, fileName)
 		originalContent := []byte("original content")
-		if err := os.WriteFile(filePath, originalContent, 0644); err != nil {
+		if err := os.WriteFile(filePath, originalContent, 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to create file %q: %v", filePath, err)
 		}
 		sha := calculateSHA256(t, filePath)
@@ -80,7 +81,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 		fileName := "modified.txt"
 		filePath := filepath.Join(tempDir, fileName)
 		initialContent := []byte("initial")
-		if err := os.WriteFile(filePath, initialContent, 0644); err != nil {
+		if err := os.WriteFile(filePath, initialContent, 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to create file %q: %v", filePath, err)
 		}
 		// Compute its initial checksum.
@@ -88,7 +89,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 
 		// Now modify the file.
 		modifiedContent := []byte("modified content")
-		if err := os.WriteFile(filePath, modifiedContent, 0644); err != nil {
+		if err := os.WriteFile(filePath, modifiedContent, 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to modify file %q: %v", filePath, err)
 		}
 
@@ -111,7 +112,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 		// valid file
 		validFile := "valid2.txt"
 		validPath := filepath.Join(tempDir, validFile)
-		if err := os.WriteFile(validPath, []byte("content valid"), 0644); err != nil {
+		if err := os.WriteFile(validPath, []byte("content valid"), 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to create file %q: %v", validPath, err)
 		}
 		validSHA := calculateSHA256(t, validPath)
@@ -122,12 +123,12 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 		// modified file: create then change it.
 		modFile := "mod2.txt"
 		modPath := filepath.Join(tempDir, modFile)
-		if err := os.WriteFile(modPath, []byte("original mod"), 0644); err != nil {
+		if err := os.WriteFile(modPath, []byte("original mod"), 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to create file %q: %v", modPath, err)
 		}
 		modSHA := calculateSHA256(t, modPath)
 		// Modify the file to simulate external change.
-		if err := os.WriteFile(modPath, []byte("changed mod"), 0644); err != nil {
+		if err := os.WriteFile(modPath, []byte("changed mod"), 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to modify file %q: %v", modPath, err)
 		}
 

@@ -8,6 +8,8 @@ import (
 )
 
 // TestResolveRPackInputs tests the ResolveRPackInputs function.
+//
+//nolint:gocognit,gocyclo // test: table-driven test with many cases
 func TestResolveRPackInputs(t *testing.T) {
 	// Create a temporary directory to act as the execution path.
 	execPath := t.TempDir()
@@ -15,14 +17,14 @@ func TestResolveRPackInputs(t *testing.T) {
 	// Prepare a file and a directory in execPath.
 	// Create a file "file.txt" inside execPath.
 	filePath := filepath.Join(execPath, "file.txt")
-	err := os.WriteFile(filePath, []byte("dummy file content"), 0644)
+	err := os.WriteFile(filePath, []byte("dummy file content"), 0o644) //nolint:gosec // test file
 	if err != nil {
 		t.Fatalf("failed to write file: %s", err)
 	}
 
 	// Create a directory "dir" inside execPath.
 	dirPath := filepath.Join(execPath, "dir")
-	err = os.Mkdir(dirPath, 0755)
+	err = os.Mkdir(dirPath, 0o755) //nolint:gosec // test file
 	if err != nil {
 		t.Fatalf("failed to create directory: %s", err)
 	}
@@ -57,19 +59,20 @@ func TestResolveRPackInputs(t *testing.T) {
 		for _, exp := range expected {
 			var found bool
 			for _, actual := range resolved {
-				if actual.Name == exp.Name {
-					found = true
-					if exp.UserPath != actual.UserPath {
-						t.Errorf("For %s, expected user path %q, got %q", exp.Name, exp.UserPath, actual.UserPath)
-					}
-					if exp.ResolvedPath != actual.ResolvedPath {
-						t.Errorf("For %s, expected resolved path %q, got %q", exp.Name, exp.ResolvedPath, actual.ResolvedPath)
-					}
-					if exp.Type != actual.Type {
-						t.Errorf("For %s, expected type %q, got %q", exp.Name, exp.Type, actual.Type)
-					}
-					break
+				if actual.Name != exp.Name {
+					continue
 				}
+				found = true
+				if exp.UserPath != actual.UserPath {
+					t.Errorf("For %s, expected user path %q, got %q", exp.Name, exp.UserPath, actual.UserPath)
+				}
+				if exp.ResolvedPath != actual.ResolvedPath {
+					t.Errorf("For %s, expected resolved path %q, got %q", exp.Name, exp.ResolvedPath, actual.ResolvedPath)
+				}
+				if exp.Type != actual.Type {
+					t.Errorf("For %s, expected type %q, got %q", exp.Name, exp.Type, actual.Type)
+				}
+				break
 			}
 			if !found {
 				t.Errorf("expected resolution for %s not found", exp.Name)

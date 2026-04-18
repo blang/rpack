@@ -21,13 +21,13 @@ func createTempDirOrFail(t *testing.T) string {
 // createTempFile creates a temporary file in a given directory.
 func createTempFile(t *testing.T, dir string) string {
 	t.Helper()
-	filepath := filepath.Join(dir, "notadir")
-	f, err := os.Create(filepath)
+	filePath := filepath.Join(dir, "notadir")
+	f, err := os.Create(filePath) //nolint:gosec // test file
 	if err != nil {
 		t.Fatalf("failed to create a file: %v", err)
 	}
 	_ = f.Close()
-	return filepath
+	return filePath
 }
 
 // TestNewFileResolver tests the constructor for FileResolver.
@@ -56,6 +56,8 @@ func TestNewFileResolver(t *testing.T) {
 }
 
 // TestResolveInput tests the ResolveInput method for all supported prefixes.
+//
+//nolint:gocognit,gocyclo // test: table-driven test with many cases
 func TestResolveInput(t *testing.T) {
 	// Create temporary directories for all base paths.
 	defDir := createTempDirOrFail(t)
@@ -69,13 +71,13 @@ func TestResolveInput(t *testing.T) {
 		{
 			Name:         "inputFile",
 			UserPath:     "file.txt",
-			ResolvedPath: filepath.Join("/dummy/path", "file.txt"),
+			ResolvedPath: filepath.Join("/dummy/path", "file.txt"), //nolint:gocritic // intentional: test uses literal path with separator
 			Type:         RPackInputTypeFile,
 		},
 		{
 			Name:         "inputDir",
 			UserPath:     "dir",
-			ResolvedPath: filepath.Join("/dummy/path", "dir"),
+			ResolvedPath: filepath.Join("/dummy/path", "dir"), //nolint:gocritic // intentional: test uses literal path with separator
 			Type:         RPackInputTypeDirectory,
 		},
 	}
@@ -191,6 +193,8 @@ func TestResolveInput(t *testing.T) {
 }
 
 // TestResolveOutput tests the ResolveOutput method.
+//
+//nolint:gocognit // test: table-driven test with many cases
 func TestResolveOutput(t *testing.T) {
 	// Create temporary directories for run and temp – the only two output spaces.
 	defDir := createTempDirOrFail(t)

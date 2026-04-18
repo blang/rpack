@@ -6,12 +6,15 @@ import (
 
 	"log/slog"
 
-	"github.com/blang/rpack/pkg/rpack/util"
 	"github.com/hashicorp/go-getter"
 	"github.com/pkg/errors"
+
+	"github.com/blang/rpack/pkg/rpack/util"
 )
 
 // RPackInstance is an executable instance of rpack
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackInstance struct {
 	// Absolute path to where to execute the rpack
 	ExecPath string
@@ -34,13 +37,20 @@ type RPackInstance struct {
 	ResolvedInputs []*RPackResolvedInput
 }
 
+// RPackInputType defines the type of an rpack input.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackInputType string
 
+// RPack input type constants.
 const (
 	RPackInputTypeFile      RPackInputType = "file"
 	RPackInputTypeDirectory RPackInputType = "dir"
 )
 
+// RPackResolvedInput represents a resolved input with its value.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackResolvedInput struct {
 	Name string
 
@@ -87,6 +97,7 @@ func ResolveRPackInputs(configInputs map[string]string, execPath string) ([]*RPa
 	return resolvedInputs, nil
 }
 
+// RPack cache directory constants.
 const (
 	RPackCacheDir       = ".rpack.d"
 	RPackCacheDirSource = "source"
@@ -96,10 +107,9 @@ const (
 
 // LoadRPack loads all required data of a RPack to be executed.
 func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error) {
-
 	// Setup cache path
 	packCachePath := filepath.Join(execPath, RPackCacheDir, util.Sha256String(ci.Config.Source))
-	err := os.MkdirAll(packCachePath, 0755)
+	err := os.MkdirAll(packCachePath, 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not setup cache path %s", packCachePath)
 	}
@@ -107,7 +117,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	// Setup source path
 	packSourcePath := filepath.Join(packCachePath, RPackCacheDirSource)
 	// Do not create last part of path, since go-getter is required to create it , since it creates symlinks for local references
-	err = os.MkdirAll(filepath.Dir(packSourcePath), 0755)
+	err = os.MkdirAll(filepath.Dir(packSourcePath), 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not setup source path %s", packSourcePath)
 	}
@@ -116,13 +126,13 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	shaConfigPath := util.Sha256String(ci.ConfigPath)
 	packRunPath := filepath.Join(packCachePath, shaConfigPath, RPackCacheDirRun)
 	// Cleanup RunPath first
-	if _, err := os.Stat(packRunPath); err == nil {
+	if _, err = os.Stat(packRunPath); err == nil {
 		err = os.RemoveAll(packRunPath)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Could not cleanup run path: %s", packRunPath)
 		}
 	}
-	err = os.MkdirAll(packRunPath, 0755)
+	err = os.MkdirAll(packRunPath, 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not setup run path %s", packRunPath)
 	}
@@ -130,13 +140,13 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	// Setup tmp path
 	packTempPath := filepath.Join(packCachePath, shaConfigPath, RPackCacheDirTemp)
 	// Cleanup TempPath first
-	if _, err := os.Stat(packTempPath); err == nil {
+	if _, err = os.Stat(packTempPath); err == nil {
 		err = os.RemoveAll(packTempPath)
 		if err != nil {
 			return nil, errors.Wrapf(err, "Could not cleanup temp path: %s", packTempPath)
 		}
 	}
-	err = os.MkdirAll(packTempPath, 0755)
+	err = os.MkdirAll(packTempPath, 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not setup temp path %s", packTempPath)
 	}
@@ -180,7 +190,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	}, nil
 }
 
-func extractPackageAddrSubDir(src string) (string, string, error) {
+func extractPackageAddrSubDir(src string) (pkgDir, subDir string, err error) {
 	result, err := getter.Detect(src, "", getter.Detectors)
 	if err != nil {
 		return "", "", errors.Wrap(err, "Go getter detection failed")
@@ -194,6 +204,7 @@ func extractPackageAddrSubDir(src string) (string, string, error) {
 	return packageAddr, subDir, nil
 }
 
+// RPack definition file constants.
 const (
 	RPackDefDefaultFilename = "rpack.yaml"
 	RPackDefSchemaFilename  = "schema.cue"
@@ -202,18 +213,13 @@ const (
 
 // RPackDefInstance contains a prepared execution environment
 // of a RPackDef.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackDefInstance struct {
-	// Source directory where rpack.yaml is stored
-	Source string
-
-	// Absolute path to the script
-	ScriptPath string
-
-	// Deserialized RPackDef rpack.yaml
-	Def *RPackDef
-
-	// Validate user values and inputs
 	ConfigValidator SchemaValidator
+	Def             *RPackDef
+	Source          string
+	ScriptPath      string
 }
 
 // ValidateConfig validates the values and inputs of a RPack against the schema of a RPackDef.
@@ -227,7 +233,6 @@ func (i *RPackDefInstance) ValidateConfig(c *RPackConfig) error {
 // SetupRPackDefInstance loads the RPackDef from the given source path
 // and sets up the RPackDefInstance for validation and execution.
 func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
-
 	// LoadDefinition
 	defPath := filepath.Join(source, RPackDefDefaultFilename)
 	def, err := LoadRPackDef(defPath)
@@ -238,7 +243,7 @@ func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
 	// Validate Definition
 	err = def.ValidateSchema()
 	if err != nil {
-		return nil, errors.Wrapf(err, "Defintion schema validation failed: %s", defPath)
+		return nil, errors.Wrapf(err, "Definition schema validation failed: %s", defPath)
 	}
 
 	var vc SchemaValidator
@@ -247,7 +252,7 @@ func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
 	if _, err := os.Stat(schemaFile); err == nil { // File exists
 		// Parse schema and validate values
 
-		b, err := os.ReadFile(schemaFile)
+		b, err := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
 		if err != nil {
 			return nil, errors.Wrapf(err, "Failed to open schema file: %s", schemaFile)
 		}

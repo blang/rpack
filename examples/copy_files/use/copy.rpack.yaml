@@ -1,6 +1,6 @@
 "@schema_version": "v1"
 source: "../rpackdef"
-config: 
+config:
   values:
     copy_file1: true
     copy_file2: false

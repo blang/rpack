@@ -4,32 +4,34 @@ import (
 	_ "embed"
 	"path/filepath"
 
-	"github.com/blang/rpack/pkg/rpack/util"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
+
+	"github.com/blang/rpack/pkg/rpack/util"
 )
 
 // RPackConfig is the configuration to use a rpack file
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackConfig struct {
-	SchemaVersion string `json:"@schema_version"`
-
-	// Follows https://github.com/hashicorp/go-getter syntax.
-	Source string `json:"source"`
-
-	// Bundles values and inputs
-	Config *RPackConfigConfig `json:"config"`
+	Config        *RPackConfigConfig `json:"config"`
+	SchemaVersion string             `json:"@schema_version"`
+	Source        string             `json:"source"`
 }
 
 // RPackConfigConfig bundles Values and Input declaration
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackConfigConfig struct {
 	// Inputs defines dirs and files the rpack is allowed to read
 	// This should match the definitions inputs.
 	Inputs map[string]string `json:"inputs"`
 
 	// Values represents the values for the config defined
-	Values map[string]interface{} `json:"values"`
+	Values map[string]any `json:"values"`
 }
 
+// Validate checks the configuration for errors.
 func (c *RPackConfig) Validate() error {
 	err := RPackSchemaValidator.Validate(c)
 	if err != nil {
@@ -38,16 +40,22 @@ func (c *RPackConfig) Validate() error {
 	return nil
 }
 
+// RPackSchema holds the CUE schema for rpack configuration validation.
+//
 //go:embed schema.cue
 var RPackSchema string
 
+// CUE schema internal names.
 const (
 	RPackInternalSchemaName = "#Schema"
 )
 
+// RPackSchemaValidator is the precompiled CUE schema validator.
 var RPackSchemaValidator = lo.Must(NewCueValidator([]byte(RPackSchema), RPackInternalSchemaName))
 
-// RPack is the internal representation of a RPackConfig
+// RPackConfigInstance is the internal representation of a RPackConfig.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackConfigInstance struct {
 
 	// Path of the config
@@ -63,12 +71,15 @@ type RPackConfigInstance struct {
 	LockFilePath string
 }
 
+// Current schema versions for config and lockfile.
 const (
 	RPackConfigCurrentSchemaVersion   = "v1"
 	RPackLockFileCurrentSchemaVersion = "v1"
 )
 
 // RPackLockFile keeps track of the files written by a RPackInstance to remove files not written between executions
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackLockFile struct {
 	SchemaVersion string               `json:"@schema_version"`
 	Files         []*RPackLockFileFile `json:"files"`
@@ -82,6 +93,7 @@ func NewRPackLockFile() *RPackLockFile {
 	}
 }
 
+// Validate checks the lock file for errors.
 func (f *RPackLockFile) Validate() error {
 	if f.SchemaVersion != RPackLockFileCurrentSchemaVersion {
 		return errors.Errorf("Unsupported lockfile schema version %q, supported %q", f.SchemaVersion, RPackLockFileCurrentSchemaVersion)
@@ -90,6 +102,8 @@ func (f *RPackLockFile) Validate() error {
 }
 
 // RPackLockFileFile is a single lock file state
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackLockFileFile struct {
 	// Path relative to lockfile directory marking the filename
 	Path string `json:"path"`
@@ -97,13 +111,17 @@ type RPackLockFileFile struct {
 	Sha string `json:"sha"`
 }
 
-func (f *RPackLockFile) AddFile(path string, sha string) {
+// AddFile adds a file entry to the lock file.
+func (f *RPackLockFile) AddFile(path, sha string) {
 	f.Files = append(f.Files, &RPackLockFileFile{
 		Path: path,
 		Sha:  sha,
 	})
 }
 
+// RPackLockFileIntegrity represents integrity check results for a lock file.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackLockFileIntegrity struct {
 	Modified []string
 	Removed  []string
@@ -130,11 +148,14 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 	return res, nil
 }
 
+// RPackLockFileChanges represents changes detected in a lock file.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackLockFileChanges struct {
 	// File added in comparison
 	Added []string
 
-	// File removed in comparision
+	// File removed in comparison
 	Removed []string
 }
 

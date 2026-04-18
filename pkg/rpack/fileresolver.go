@@ -4,21 +4,25 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blang/rpack/pkg/rpack/util"
 	"github.com/pkg/errors"
+
+	"github.com/blang/rpack/pkg/rpack/util"
 )
 
+// FileResolverLocation represents the location type for file resolution.
 type FileResolverLocation string
 
+// File resolver location types.
 const (
 	FileResolverLocationRPack FileResolverLocation = "rpack"
 
-	// Specifies the execution path, the source of the rpack (not definition)
+	// FileResolverLocationSource specifies the execution path, the source of the rpack (not definition).
 	FileResolverLocationSource FileResolverLocation = "source"
 	FileResolverLocationTemp   FileResolverLocation = "temp"
 	FileResolverLocationMapped FileResolverLocation = "map"
 )
 
+// ControlledFile wraps a file with access control.
 type ControlledFile struct {
 	// Name of the Map if it is available
 	MapName string
@@ -33,13 +37,13 @@ type ControlledFile struct {
 	Location FileResolverLocation
 }
 
-// DEPRECATED: In favor of FS
+// FileResolver resolves file paths. DEPRECATED: Use FS instead.
 // FileResolver resolves files in a rpack script file to real files.
 // The RPackDef script will use certain functions to read and write files.
 // This file access needs to be sandboxed in well confined space and mapped to different
 // directories depending on the purpose (the RPack Def directory, the users execution path, a temp dir,
 // the actual output/run directory).
-// The resolver does not check for the existance of the specified files.
+// The resolver does not check for the existence of the specified files.
 //
 // There are some rules that apply to all file access, if input or output:
 // - Path needs to be relative
@@ -81,10 +85,9 @@ type FileResolver struct {
 	resolvedInputs []*RPackResolvedInput
 }
 
-// DEPRECATED: In favor of FS
+// NewFileResolver creates a new file resolver. DEPRECATED: Use NewFileResolverFS instead.
 // TODO: Needs better constructor, potential problem of mixing paths.
 func NewFileResolver(defSourcePath, runPath, tempPath, execPath string, resolvedInputs []*RPackResolvedInput) (*FileResolver, error) {
-
 	ensureDir := func(path string) error {
 		if dir, err := util.CheckFileOrDirExists(path); err != nil {
 			return errors.Wrap(err, "Failed to use path")
@@ -118,7 +121,6 @@ func NewFileResolver(defSourcePath, runPath, tempPath, execPath string, resolved
 
 // ResolveInput resolves user defined file paths from script to absolute paths mapping to different locations.
 func (r *FileResolver) ResolveInput(name string) (*ControlledFile, error) {
-
 	prefix, suffix, found := strings.Cut(name, ":")
 	if !found {
 		return nil, errors.Errorf("Input path needs to use map:, rpack:, or temp: prefix")
@@ -188,7 +190,7 @@ func (r *FileResolver) resolveRPackPath(name string) (*ControlledFile, error) {
 
 	return &ControlledFile{
 		AbsPath:  filepath.Join(r.defSourcePath, cleanPath),
-		Path:     filepath.Join(cleanPath),
+		Path:     cleanPath,
 		Location: FileResolverLocationRPack,
 	}, nil
 }
@@ -210,11 +212,9 @@ func (r *FileResolver) resolveTempPath(name string) (*ControlledFile, error) {
 
 // ResolveOutput resolves user defined file paths from script to absolute paths mapping to different locations.
 func (r *FileResolver) ResolveOutput(name string) (*ControlledFile, error) {
-
 	prefix, suffix, found := strings.Cut(name, ":")
 	if found {
-		switch prefix {
-		case "temp":
+		if prefix == "temp" {
 			// Resolve file to the temp directory
 			return r.resolveTempPath(suffix)
 		}

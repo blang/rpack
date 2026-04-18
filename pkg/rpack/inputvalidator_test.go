@@ -143,7 +143,6 @@ func TestValidateRPackInputs(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc // capture range variable
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateRPackInputs(tc.resolved, tc.def)
 			if tc.expectError && err == nil {

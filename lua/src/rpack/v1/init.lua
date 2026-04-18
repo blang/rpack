@@ -1,6 +1,6 @@
 ------------------------
 -- RPack Lua bindings
--- The RPack module contains all necessary functions to manipulate the 
+-- The RPack module contains all necessary functions to manipulate the
 -- Use `local rpack = require "rpack.v1"`.
 --
 -- Output file handles allow `temp:file`, `./dir/myfile` (target location)
@@ -12,7 +12,7 @@ local rpack = {}
 --- User configured inputs.
 --- Not all inputs specified in RPackDef must be configured by the user.
 --- Can be prefixed with `map:` to use as a file handle, e.g. input: my-file -> map:my-file
---- @return result Array of user supplied inputs names. 
+--- @return result Array of user supplied inputs names.
 function rpack.rpack.inputs() end
 
 --- User configured values.

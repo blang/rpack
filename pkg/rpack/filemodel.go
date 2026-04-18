@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Filesystem resolver names.
 const (
 	RPackResolver string = "rpack"
 	TempResolver  string = "temp"
@@ -19,6 +20,9 @@ const (
 	TargetResolver string = "target"
 )
 
+// RPackFS represents the rpack filesystem.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackFS struct {
 	*BaseFS
 	PureCheck *EnsurePure
@@ -28,6 +32,7 @@ type RPackFS struct {
 // Check if RPackFS satisfies FS interface
 var _ = FS(&RPackFS{})
 
+// TargetTransferHandleFilterFn filters handles for target transfer operations.
 var TargetTransferHandleFilterFn = HandleFilterFn(func(typ FSAccessType, h FSHandle) bool {
 	if typ != FSAccessTypeWrite {
 		return false
@@ -38,6 +43,7 @@ var TargetTransferHandleFilterFn = HandleFilterFn(func(typ FSAccessType, h FSHan
 	return true
 })
 
+// NewRPackFS creates a new RPackFS instance.
 // TODO: execPath not used
 func NewRPackFS(enforcePure bool, defSourcePath, runPath, tempPath, execPath string, resolvedInputs []*RPackResolvedInput) *RPackFS {
 	resolvers := []FSResolver{
@@ -69,6 +75,7 @@ func NewRPackFS(enforcePure bool, defSourcePath, runPath, tempPath, execPath str
 	}
 }
 
+// Check verifies the filesystem state.
 func (fs *RPackFS) Check() error {
 	if fs.PureCheck != nil {
 		return errors.Wrap(fs.PureCheck.CheckConflicts(), "Pure Fileaccess check failed")
@@ -76,6 +83,7 @@ func (fs *RPackFS) Check() error {
 	return nil
 }
 
+// Recorder returns the filesystem recorder.
 func (fs *RPackFS) Recorder() *FSRecorder {
 	return fs.recorder
 }
@@ -98,9 +106,9 @@ func (fs *RPackFS) TargetWriteHandles() []FSHandle {
 type FS interface {
 	Write(name string, b []byte) error
 	Read(name string) ([]byte, error)
-	Stat(name string) (exists bool, dir bool, err error)
-	ReadDir(name string) (_files []string, _dirs []string, _err error)
-	ReadDirAll(name string) (_files []string, _dirs []string, _err error)
+	Stat(name string) (exists, dir bool, err error)
+	ReadDir(name string) (_files, _dirs []string, _err error)
+	ReadDirAll(name string) (_files, _dirs []string, _err error)
 }
 
 // InMemoryFS is used for debugging purposes only.
@@ -109,17 +117,20 @@ type InMemoryFS struct {
 	Tree map[string]*InMemoryFSEntry
 }
 
+// NewInMemoryFS creates a new in-memory filesystem.
 func NewInMemoryFS() *InMemoryFS {
 	return &InMemoryFS{
 		Tree: make(map[string]*InMemoryFSEntry),
 	}
 }
 
+// InMemoryFSEntry represents an entry in the in-memory filesystem.
 type InMemoryFSEntry struct {
 	Content []byte
 	IsDir   bool
 }
 
+// Mkdir creates a directory in the in-memory filesystem.
 func (fs *InMemoryFS) Mkdir(name string) {
 	fs.Tree[name] = &InMemoryFSEntry{
 		IsDir: true,
@@ -151,7 +162,8 @@ func (fs *InMemoryFS) Read(name string) ([]byte, error) {
 	return b, nil
 }
 
-func (fs *InMemoryFS) Stat(name string) (exists bool, dir bool, err error) {
+// Stat returns file existence and directory status.
+func (fs *InMemoryFS) Stat(name string) (exists, dir bool, err error) {
 	if _, ok := fs.Tree[name]; !ok {
 		return false, false, nil
 	}
@@ -159,14 +171,17 @@ func (fs *InMemoryFS) Stat(name string) (exists bool, dir bool, err error) {
 	return true, entry.IsDir, nil
 }
 
-func (fs *InMemoryFS) ReadDir(name string) (_files []string, _dirs []string, _err error) {
-	return nil, nil, errors.Errorf("Not yet implemented")
-}
-func (fs *InMemoryFS) ReadDirAll(name string) (_files []string, _dirs []string, _err error) {
+// ReadDir lists files and directories.
+func (fs *InMemoryFS) ReadDir(name string) (_files, _dirs []string, _err error) {
 	return nil, nil, errors.Errorf("Not yet implemented")
 }
 
-// Base RPack Filesystem model.
+// ReadDirAll lists all files and directories recursively.
+func (fs *InMemoryFS) ReadDirAll(name string) (_files, _dirs []string, _err error) {
+	return nil, nil, errors.Errorf("Not yet implemented")
+}
+
+// BaseFS implements the base filesystem model for rpack.
 // Resolvers resolve friendly filenames such as prefix:path to a specific location on the actual filesystem.
 // Exactly one resolver is allowed to return `matched=true` for a given prefix, the first resolver matching is used to acquire a FSHandle.
 // Hooks are called on any interactions with the handles and are used for recording written files
@@ -218,7 +233,8 @@ func (fs *BaseFS) Read(name string) ([]byte, error) {
 	return handle.Read()
 }
 
-func (fs *BaseFS) Stat(name string) (exists bool, dir bool, err error) {
+// Stat returns file existence and directory status.
+func (fs *BaseFS) Stat(name string) (exists, dir bool, err error) {
 	handle, err := fs.resolve(name)
 	if err != nil {
 		return false, false, err
@@ -235,13 +251,16 @@ func (fs *BaseFS) Stat(name string) (exists bool, dir bool, err error) {
 
 // ReadDir reads a directory and returns the files and directories inside this directory or an error.
 // The returned list of dirs does not contain the directory itself.
-func (fs *BaseFS) ReadDir(name string) (_files []string, _dirs []string, _err error) {
+//
+//nolint:gocognit,gocyclo // intentional: complex orchestration logic
+func (fs *BaseFS) ReadDir(name string) (_files, _dirs []string, _err error) {
 	handle, err := fs.resolve(name)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, hook := range fs.Hooks {
-		if err := hook.Stat(handle); err != nil {
+		err = hook.Stat(handle)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -258,7 +277,8 @@ func (fs *BaseFS) ReadDir(name string) (_files []string, _dirs []string, _err er
 
 	// Call ReadDir
 	for _, hook := range fs.Hooks {
-		if err := hook.ReadDir(handle); err != nil {
+		err = hook.ReadDir(handle)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -274,7 +294,7 @@ func (fs *BaseFS) ReadDir(name string) (_files []string, _dirs []string, _err er
 				return nil, nil, err
 			}
 		}
-		// Implicitely already called stat due to ReadDir, not doing it extra
+		// Implicitly already called stat due to ReadDir, not doing it extra
 		namesFile = append(namesFile, handle.FriendlyPath())
 	}
 	for _, handle := range dirs {
@@ -283,14 +303,14 @@ func (fs *BaseFS) ReadDir(name string) (_files []string, _dirs []string, _err er
 				return nil, nil, err
 			}
 		}
-		// Implicitely already called stat due to ReadDir, not doing it extra
+		// Implicitly already called stat due to ReadDir, not doing it extra
 		namesDir = append(namesDir, handle.FriendlyPath())
 	}
 	return namesFile, namesDir, nil
 }
 
 // ReadDirAll recursively lists all files and directories
-func (fs *BaseFS) ReadDirAll(name string) (_files []string, _dirs []string, _err error) {
+func (fs *BaseFS) ReadDirAll(name string) (_files, _dirs []string, _err error) {
 	var files []string
 	var dirs []string
 
@@ -317,6 +337,7 @@ func (fs *BaseFS) ReadDirAll(name string) (_files []string, _dirs []string, _err
 	return files, dirs, nil
 }
 
+// FSAccessHook defines hooks for filesystem access events.
 // Options to implement:
 // Accesscontrol part of FS by executing HandleFuncs, or additionally on every call
 // Can be used to do recording as well as access control
@@ -346,7 +367,8 @@ type FileBackedFSResolver struct {
 // Check FileBackedFSResolver satisfies FSResolver interface
 var _ = FSResolver(&FileBackedFSResolver{})
 
-func NewFileBackedFSResolver(name string, prefix string, baseDir string) *FileBackedFSResolver {
+// NewFileBackedFSResolver creates a file-backed filesystem resolver.
+func NewFileBackedFSResolver(name, prefix, baseDir string) *FileBackedFSResolver {
 	return &FileBackedFSResolver{
 		name:    name,
 		prefix:  prefix,
@@ -354,6 +376,7 @@ func NewFileBackedFSResolver(name string, prefix string, baseDir string) *FileBa
 	}
 }
 
+// Resolve resolves a name to a filesystem handle.
 func (r *FileBackedFSResolver) Resolve(name string) (FSHandle, bool, error) {
 	suffix, found := strings.CutPrefix(name, r.prefix)
 	if !found {
@@ -373,8 +396,10 @@ func (r *FileBackedFSResolver) Resolve(name string) (FSHandle, bool, error) {
 	return NewFileBackedFSHandle(absPath, friendlyPath, r.name, indirectTargetPath), true, nil
 }
 
+// MapFSResolverPrefix is the prefix for map-based resolver lookups.
 const MapFSResolverPrefix = "map:"
 
+// MapFSResolver resolves names from a map.
 type MapFSResolver struct {
 	name           string
 	prefix         string
@@ -384,7 +409,8 @@ type MapFSResolver struct {
 // Check MapFSResolver satisfies FSResolver interface
 var _ = FSResolver(&MapFSResolver{})
 
-func NewMapFSResolver(name string, prefix string, resolvedInputs []*RPackResolvedInput) *MapFSResolver {
+// NewMapFSResolver creates a map-based filesystem resolver.
+func NewMapFSResolver(name, prefix string, resolvedInputs []*RPackResolvedInput) *MapFSResolver {
 	return &MapFSResolver{
 		name:           name,
 		prefix:         prefix,
@@ -392,6 +418,7 @@ func NewMapFSResolver(name string, prefix string, resolvedInputs []*RPackResolve
 	}
 }
 
+// Resolve resolves a name from the input map.
 func (r *MapFSResolver) Resolve(name string) (FSHandle, bool, error) {
 	suffix, found := strings.CutPrefix(name, r.prefix)
 	if !found {
@@ -443,8 +470,10 @@ func (r *MapFSResolver) Resolve(name string) (FSHandle, bool, error) {
 	return NewFileBackedFSHandle(p, cleanFriendlyName, r.name, relPath), true, nil
 }
 
+// FSAccessType represents the type of filesystem access.
 type FSAccessType string
 
+// Filesystem access type constants.
 const (
 	FSAccessTypeRead    FSAccessType = "read"
 	FSAccessTypeWrite   FSAccessType = "write"
@@ -478,18 +507,20 @@ func NewFSRecorder(filterFn HandleFilterFn) *FSRecorder {
 	}
 }
 
+// FSRecorderRecord represents a recorded filesystem access event.
 type FSRecorderRecord struct {
-	Typ    FSAccessType
 	Handle FSHandle
+	Typ    FSAccessType
 }
 
+// Records returns the recorded filesystem access events.
 func (f *FSRecorder) Records() []FSRecorderRecord {
 	return f.records
 }
 
 func (f *FSRecorder) filterRecord(typ FSAccessType, h FSHandle) {
 	if f.filterFn == nil || f.filterFn(typ, h) {
-		f.records = append(f.records, FSRecorderRecord{typ, h})
+		f.records = append(f.records, FSRecorderRecord{Typ: typ, Handle: h})
 	}
 }
 
@@ -501,10 +532,14 @@ func (f *FSRecorder) Write(h FSHandle) error {
 	f.filterRecord(FSAccessTypeWrite, h)
 	return nil
 }
+
+// ReadDir records a directory read event.
 func (f *FSRecorder) ReadDir(h FSHandle) error {
 	f.filterRecord(FSAccessTypeReadDir, h)
 	return nil
 }
+
+// Stat records a stat event.
 func (f *FSRecorder) Stat(h FSHandle) error {
 	f.filterRecord(FSAccessTypeStat, h)
 	return nil
@@ -516,6 +551,8 @@ func (f *FSRecorder) Stat(h FSHandle) error {
 // It performs the following rules:
 // - Prevents writes to rpackdef and map
 // - Prevents reads to target
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackAccessControlFSHook struct{}
 
 // Check EnsurePure satisfies FSAccessHook interface
@@ -535,10 +572,11 @@ func (f *RPackAccessControlFSHook) Write(h FSHandle) error {
 		return errors.Errorf("Not allowed to write %s, use `temp` instead", h.FriendlyPath())
 	case MapResolver:
 		return errors.Errorf("Not allowed to write %s, use `target` instead", h.FriendlyPath())
-
 	}
 	return nil
 }
+
+// ReadDir records a directory read access check.
 func (f *RPackAccessControlFSHook) ReadDir(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == TargetResolver {
@@ -546,6 +584,8 @@ func (f *RPackAccessControlFSHook) ReadDir(h FSHandle) error {
 	}
 	return nil
 }
+
+// Stat records a stat access check.
 func (f *RPackAccessControlFSHook) Stat(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == TargetResolver {
@@ -554,7 +594,7 @@ func (f *RPackAccessControlFSHook) Stat(h FSHandle) error {
 	return nil
 }
 
-// EnforcePure ensures operations are pure, meaning side-effect free.
+// EnsurePure enforces that operations are pure, meaning side-effect free.
 // This specifically means it is not allowed to write to a file that was read before.
 // Since this would lead to a second execution not being idempotent.
 // Example:
@@ -629,6 +669,8 @@ func (f *EnsurePure) Write(h FSHandle) error {
 	}
 	return nil
 }
+
+// ReadDir checks directory read purity.
 func (f *EnsurePure) ReadDir(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == MapResolver {
@@ -636,6 +678,8 @@ func (f *EnsurePure) ReadDir(h FSHandle) error {
 	}
 	return nil
 }
+
+// Stat checks stat purity.
 func (f *EnsurePure) Stat(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == MapResolver {

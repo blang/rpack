@@ -7,8 +7,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// LoadRPackDef loads an rpack definition from the given path.
 func LoadRPackDef(name string) (*RPackDef, error) {
-	b, err := os.ReadFile(name)
+	b, err := os.ReadFile(name) //nolint:gosec // intentional: path comes from user config
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to open file: %s", name)
 	}

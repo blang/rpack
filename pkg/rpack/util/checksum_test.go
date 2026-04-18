@@ -10,14 +10,13 @@ import (
 
 // TestSha256File tests the Sha256File function for various scenarios.
 func TestSha256File(t *testing.T) {
-
 	t.Run("KnownContent", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// Create a file with known content.
 		content := []byte("hello world")
 		tempFilePath := filepath.Join(tmpDir, "testfile.txt")
-		if err := os.WriteFile(tempFilePath, content, 0644); err != nil {
+		if err := os.WriteFile(tempFilePath, content, 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to write temporary file: %v", err)
 		}
 
@@ -49,7 +48,7 @@ func TestSha256File(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		emptyFilePath := filepath.Join(tmpDir, "empty.txt")
-		if err := os.WriteFile(emptyFilePath, []byte(""), 0644); err != nil {
+		if err := os.WriteFile(emptyFilePath, []byte(""), 0o644); err != nil { //nolint:gosec // test file
 			t.Fatalf("Failed to create empty temporary file: %v", err)
 		}
 		expectedEmpty := sha256.Sum256([]byte(""))

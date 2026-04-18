@@ -33,7 +33,7 @@ func TestRPackAPIFromJSON(t *testing.T) {
 				return false
 			  end
 			end
-			
+
 			-- We've checked everything.
 			return true
 		end
@@ -135,7 +135,7 @@ func TestRPackAPIToAndFromYAML(t *testing.T) {
 				return false
 			  end
 			end
-			
+
 			-- We've checked everything.
 			return true
 		end

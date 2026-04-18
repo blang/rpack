@@ -1,13 +1,12 @@
-/*
-Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-*/
+// Package cmd implements the check command.
 package cmd
 
 import (
 	"context"
 
-	"github.com/blang/rpack/pkg/rpack"
 	"github.com/spf13/cobra"
+
+	"github.com/blang/rpack/pkg/rpack"
 )
 
 // checkCmd represents the run command

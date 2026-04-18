@@ -7,15 +7,20 @@ import (
 	"github.com/samber/lo"
 )
 
+// RPackDefSchema holds the CUE schema for rpack definition validation.
+//
 //go:embed def_schema.cue
 var RPackDefSchema string
 
+// CUE schema internal names.
 const (
 	RPackDefSchemaName         = "#Schema"
 	RPackDefInternalSchemaName = "#Schema"
 )
 
 // RPackDef is the definition of a rpack represented by the rpack.yaml
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackDef struct {
 	SchemaVersion string `json:"@schema_version"`
 
@@ -33,9 +38,10 @@ type RPackDef struct {
 	Inputs []*RPackDefInput `json:"inputs"`
 }
 
+// RPackDefSchemaValidator is the precompiled CUE schema validator for rpack definitions.
 var RPackDefSchemaValidator = lo.Must(NewCueValidator([]byte(RPackDefSchema), RPackDefInternalSchemaName))
 
-// TODO: Can use a SchemaValidator
+// ValidateSchema validates the rpack definition against the CUE schema.
 func (def *RPackDef) ValidateSchema() error {
 	err := RPackDefSchemaValidator.Validate(def)
 	if err != nil {
@@ -51,6 +57,8 @@ const (
 )
 
 // RPackDefInput defines a potential input for the rpack.
+//
+//nolint:revive // intentional: RPack prefix is the domain convention
 type RPackDefInput struct {
 	// Type: dir or file
 	Type string `json:"type"`

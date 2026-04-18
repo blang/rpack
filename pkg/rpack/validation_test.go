@@ -8,26 +8,24 @@ func TestCueValidator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed setting up validation: %s", err)
 	}
-	{ // Valid
-		err = v.Validate(struct {
-			Field string `json:"field"`
-		}{
-			Field: "right-choice",
-		})
-		if err != nil {
-			t.Fatalf("Validation failed: %s", err)
-		}
+	// Valid
+	err = v.Validate(struct {
+		Field string `json:"field"`
+	}{
+		Field: "right-choice",
+	})
+	if err != nil {
+		t.Fatalf("Validation failed: %s", err)
 	}
 
-	{ // Invalid
-		err = v.Validate(struct {
-			Field string `json:"field"`
-		}{
-			Field: "wrong-choice",
-		})
-		if err == nil {
-			t.Fatalf("Validation should have failed for `wrong-choice`")
-		}
+	// Invalid
+	err = v.Validate(struct {
+		Field string `json:"field"`
+	}{
+		Field: "wrong-choice",
+	})
+	if err == nil {
+		t.Fatalf("Validation should have failed for `wrong-choice`")
 	}
 }
 

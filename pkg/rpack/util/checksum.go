@@ -1,3 +1,4 @@
+// Package util provides file and checksum utility functions.
 package util
 
 import (
@@ -8,6 +9,7 @@ import (
 	"os"
 )
 
+// Sha256String returns the SHA-256 hash of a string.
 func Sha256String(s string) string {
 	h := sha256.New()
 	h.Write([]byte(s))
@@ -19,7 +21,7 @@ func Sha256String(s string) string {
 // (like file not found or read error), it returns an error.
 func Sha256File(name string) (sha string, err error) {
 	// Open the file for reading.
-	file, err := os.Open(name)
+	file, err := os.Open(name) //nolint:gosec // intentional: path comes from user config
 	if err != nil {
 		return "", err
 	}

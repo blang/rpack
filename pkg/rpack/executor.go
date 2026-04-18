@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blang/rpack/pkg/rpack/util"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
+
+	"github.com/blang/rpack/pkg/rpack/util"
 )
 
+// Executor runs rpack operations.
 type Executor struct {
 
 	// Override for the execution path, optional
@@ -28,6 +30,8 @@ type Executor struct {
 
 // ExecRPack loads and executes an rpack from the
 // source file specified in `name`.
+//
+//nolint:gocognit,gocyclo // intentional: complex orchestration logic
 func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	ci, err := LoadRPackConfig(name)
 	if err != nil {
@@ -65,7 +69,7 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	fs := NewRPackFS(true, pi.SourcePath, pi.RunPath, pi.TempPath, pi.ExecPath, pi.ResolvedInputs)
 
 	// Setup external data
-	externalData := make(map[string]interface{})
+	externalData := make(map[string]any)
 	externalData["values"] = pi.ConfigInstance.Config.Config.Values
 
 	// Only supply a list of available input mappings to the script, instead of the users specified path.
@@ -83,7 +87,8 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	}
 	slog.Info("Script execution successful")
 
-	if err := fs.Check(); err != nil {
+	err = fs.Check()
+	if err != nil {
 		return errors.Wrap(err, "File access check failed")
 	}
 	// Print files to be written
@@ -137,7 +142,6 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	checksums := make(map[string]string)
 	var filesToMove []*ControlledFile
 	for _, handle := range fs.TargetWriteHandles() {
-
 		relPath := handle.IndirectTargetPath()
 		absPath := filepath.Clean(filepath.Join(pi.RunPath, relPath))
 		c := &ControlledFile{
@@ -151,7 +155,8 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 		}
 
 		// Calculate checksum
-		chsum, err := util.Sha256File(absPath)
+		var chsum string
+		chsum, err = util.Sha256File(absPath)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to calculate checksum of: %s", absPath)
 		}
@@ -199,7 +204,9 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	// Check overwrite of existing files
 	for _, added := range changes.Added {
 		targetFile := filepath.Clean(filepath.Join(execPath, added))
-		if exists, err := util.FileExists(targetFile); exists {
+		var exists bool
+		exists, err = util.FileExists(targetFile)
+		if exists {
 			slog.Warn("File is not managed by rdef but will be overwritten", "file", added)
 			if !e.Force {
 				return errors.Errorf("Existing file would need to be overwritten, use force flag to ignore: %s", added)
@@ -214,10 +221,10 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 		targetFile := filepath.Clean(filepath.Join(execPath, wFile.Path))
 
 		// Ensure directory
-		if err = os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
+		if err = os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
 			return errors.Wrapf(err, "Failed to create dirs for: %s", targetFile)
 		}
-		err := os.Rename(wFile.AbsPath, targetFile)
+		err = os.Rename(wFile.AbsPath, targetFile)
 		// TODO: Somehow capture this moment and write lockfile still
 		if err != nil {
 			return errors.Wrapf(err, "Failed to move file %s to exec path %s", wFile.Path, execPath)
@@ -227,12 +234,13 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	// Remove removed files
 	for _, removedFile := range changes.Removed {
 		p := filepath.Join(execPath, removedFile)
-		exists, err := util.FileExists(p)
+		var exists bool
+		exists, err = util.FileExists(p)
 		if err != nil {
 			return errors.Wrapf(err, "Could not check deprecated file: %s", removedFile)
 		}
 		if exists {
-			err := os.Remove(p)
+			err = os.Remove(p)
 			if err != nil {
 				return errors.Wrapf(err, "Could not remove deprecated file: %s", removedFile)
 			}

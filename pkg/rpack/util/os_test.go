@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ func TestCopyFile(t *testing.T) {
 	// Create a source file with some content.
 	srcPath := filepath.Join(dir, "testfile")
 	content := []byte("Testing filecontent")
-	if err := os.WriteFile(srcPath, content, 0666); err != nil {
+	if err := os.WriteFile(srcPath, content, 0o666); err != nil { //nolint:gosec // test file
 		t.Fatalf("failed to write source file: %v", err)
 	}
 
@@ -28,11 +29,11 @@ func TestCopyFile(t *testing.T) {
 	}
 
 	// Verify the content of the destination file.
-	gotContent, err := os.ReadFile(dstPath)
+	gotContent, err := os.ReadFile(dstPath) //nolint:gosec // test file
 	if err != nil {
 		t.Fatalf("failed to read destination file: %v", err)
 	}
-	if string(gotContent) != string(content) {
+	if !bytes.Equal(gotContent, content) {
 		t.Errorf("file content mismatch: expected %q, got %q", string(content), string(gotContent))
 	}
 
@@ -81,7 +82,7 @@ func TestCheckFileExists(t *testing.T) {
 		filePath := filepath.Join(tempDir, "tempfile.txt")
 
 		// Create the file.
-		f, err := os.Create(filePath)
+		f, err := os.Create(filePath) //nolint:gosec // test file
 		if err != nil {
 			t.Fatalf("Failed to create temporary file: %v", err)
 		}

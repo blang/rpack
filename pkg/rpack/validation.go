@@ -6,17 +6,20 @@ import (
 	"github.com/pkg/errors"
 )
 
+// SchemaValidator validates data against a schema.
 type SchemaValidator interface {
-	Validate(x interface{}) error
+	Validate(x any) error
 }
 
 // EmptyValidator provides no validation
 type EmptyValidator struct{}
 
-func (c *EmptyValidator) Validate(x interface{}) error {
+// Validate always returns nil for the empty validator.
+func (c *EmptyValidator) Validate(x any) error {
 	return nil
 }
 
+// CueValidator validates data using CUE schemas.
 type CueValidator struct {
 	Schema  cue.Value
 	Context *cue.Context
@@ -36,7 +39,8 @@ func NewCueValidator(schemaBytes []byte, path string) (*CueValidator, error) {
 	}, nil
 }
 
-func (c *CueValidator) Validate(x interface{}) error {
+// Validate checks data against the CUE schema.
+func (c *CueValidator) Validate(x any) error {
 	asCue := c.Context.Encode(x)
 	unified := c.Schema.Unify(asCue)
 	return unified.Validate()

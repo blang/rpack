@@ -29,6 +29,7 @@ type FSHandle interface {
 // Ensure FileBackedFSHandle implements FSHandle
 var _ = FSHandle(&FileBackedFSHandle{})
 
+// FileBackedFSHandle represents a file handle backed by a real filesystem.
 type FileBackedFSHandle struct {
 	absPath      string
 	friendlyPath string
@@ -37,7 +38,8 @@ type FileBackedFSHandle struct {
 	indirectTargetPath string
 }
 
-func NewFileBackedFSHandle(absPath string, friendlyPath string, resolver string, indirectTargetPath string) *FileBackedFSHandle {
+// NewFileBackedFSHandle creates a new file-backed filesystem handle.
+func NewFileBackedFSHandle(absPath, friendlyPath, resolver, indirectTargetPath string) *FileBackedFSHandle {
 	slog.Debug("New FileBackedFSHandle", "absPath", absPath, "friendlyPath", friendlyPath, "resolver", resolver, "indirectTargetPath", indirectTargetPath)
 	return &FileBackedFSHandle{
 		absPath:            absPath,
@@ -47,10 +49,12 @@ func NewFileBackedFSHandle(absPath string, friendlyPath string, resolver string,
 	}
 }
 
+// Resolver returns the resolver name.
 func (f *FileBackedFSHandle) Resolver() string {
 	return f.resolver
 }
 
+// FriendlyPath returns the human-readable path.
 func (f *FileBackedFSHandle) FriendlyPath() string {
 	return f.friendlyPath
 }
@@ -64,16 +68,17 @@ func (f *FileBackedFSHandle) Read() ([]byte, error) {
 }
 
 func (f *FileBackedFSHandle) Write(b []byte) error {
-	if err := os.MkdirAll(filepath.Dir(f.absPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(f.absPath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
 		return errors.Wrapf(err, "Could not write %s", f.friendlyPath)
 	}
-	if err := os.WriteFile(f.absPath, b, 0644); err != nil {
+	if err := os.WriteFile(f.absPath, b, 0o644); err != nil { //nolint:gosec // intentional: standard file permissions for package manager output
 		return errors.Wrapf(err, "Could not write %s", f.friendlyPath)
 	}
 	return nil
 }
 
-func (f *FileBackedFSHandle) Stat() (_dir bool, _exists bool, _err error) {
+// Stat returns file existence and directory status.
+func (f *FileBackedFSHandle) Stat() (_dir, _exists bool, _err error) {
 	fileInfo, err := os.Stat(f.absPath)
 	if os.IsNotExist(err) {
 		return false, false, nil
@@ -84,7 +89,8 @@ func (f *FileBackedFSHandle) Stat() (_dir bool, _exists bool, _err error) {
 	return fileInfo.IsDir(), true, nil
 }
 
-func (f *FileBackedFSHandle) ReadDir() (_files []FSHandle, _dirs []FSHandle, _err error) {
+// ReadDir returns directory entries.
+func (f *FileBackedFSHandle) ReadDir() (_files, _dirs []FSHandle, _err error) {
 	entries, err := os.ReadDir(f.absPath)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "Error readdir: %s", f.friendlyPath)
@@ -106,10 +112,12 @@ func (f *FileBackedFSHandle) ReadDir() (_files []FSHandle, _dirs []FSHandle, _er
 	return files, dirs, nil
 }
 
+// IndirectTargetPath returns the indirect target path for renaming.
 func (f *FileBackedFSHandle) IndirectTargetPath() string {
 	return f.indirectTargetPath
 }
 
+// Transfer copies the file to the target path.
 // TODO: Might not be used since we implement renaming through IndirectTargetPath
 func (f *FileBackedFSHandle) Transfer(dest string) error {
 	err := os.Rename(f.absPath, dest)

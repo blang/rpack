@@ -2,6 +2,7 @@ package rpack
 
 import "github.com/pkg/errors"
 
+// ValidateRPackInputs validates the inputs for an rpack configuration.
 // Accepts a
 // RPack Instance inputs: RPackInstance.ConfigInstance(RPackConfigInstance).Config(RPackConfig).Config(RPackConfigConfig).Inputs : map[string]string
 // []*RPackDefInput: from RPackDef.Inputs

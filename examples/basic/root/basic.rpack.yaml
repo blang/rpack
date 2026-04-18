@@ -1,6 +1,5 @@
 "@schema_version": "v1"
 source: "../rpackdef/basic"
-config: 
+config:
   values:
     enableUsers: true
-

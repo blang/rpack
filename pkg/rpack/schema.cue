@@ -10,4 +10,3 @@ import "strings"
     inputs?: [string]:string
     values?: _
 }
-

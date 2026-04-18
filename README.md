@@ -27,7 +27,7 @@ Use cases include:
 "@schema_version": "v1"
 # Can be git, https, s3, and others
 source: "git::https://github.com/blang/rpack.git//examples/onlyexample/rpackdef"
-config: 
+config:
   # Config values determining how files are processed
   values:
     author: "blang"
@@ -38,7 +38,7 @@ config:
 
 ```shell
 # Execute the rpack on the directory of the rpack.yaml
-rpack run --dry-run ./example.rpack.yaml 
+rpack run --dry-run ./example.rpack.yaml
 ```
 
 An rpack can write to any file or directory in the `rpack` directory, but is not allowed to read files that are not specified as inputs.
@@ -105,7 +105,7 @@ That is all from the rpack bundle side! In the full example we also supplied a `
 ```yaml
 "@schema_version": "v1"
 source: "../myrpack"
-config: 
+config:
   values:
     author: blang
   inputs:

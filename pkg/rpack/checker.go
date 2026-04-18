@@ -15,6 +15,7 @@ type Checker struct {
 	OverrideExecPath string
 }
 
+// CheckIntegrity verifies the integrity of an rpack installation.
 func (c *Checker) CheckIntegrity(ctx context.Context, name string) error {
 	ci, err := LoadRPackConfig(name)
 	if err != nil {

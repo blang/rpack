@@ -1,6 +1,6 @@
 "@schema_version": "v1"
 source: "../rpackdef"
-config: 
+config:
   values:
     output_file: "AUTHORS.md"
   inputs:

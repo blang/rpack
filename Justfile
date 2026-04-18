@@ -67,7 +67,7 @@ run:
 
 example: build
     ./rpack run ./examples/basic/root/basic.rpack.yaml
-    
+
 
 build platform="linux/amd64/-":
     #!/usr/bin/env sh
@@ -96,15 +96,15 @@ build-all:
         os=$(echo $platform | cut -d/ -f1)
         arch=$(echo $platform | cut -d/ -f2)
         arm=$(echo $platform | cut -d/ -f3)
-        binary="rpack-${os}-${arch}" 
+        binary="rpack-${os}-${arch}"
         output="{{dist_dir}}/rpack-${os}-${arch}"
-        
+
         CGO_ENABLED=0 GOOS=$os GOARCH=$arch $([ "$arm" != "-" ] && echo "GOARM=$arm") \
         go build \
             -ldflags '{{ld_flags}}' \
             -o "$output" \
             ./cmd/rpack
-        
+
         tar -C "{{dist_dir}}" -czf "$output.tar.gz" "$binary"
     done
 
@@ -113,4 +113,3 @@ prek-install:
 
 prek-run:
     prek run --all-files
-

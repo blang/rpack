@@ -7,12 +7,13 @@ import (
 	"github.com/pkg/errors"
 )
 
+// CopyFile copies a file from src to dst.
 func CopyFile(dst, src string) error {
-	srcF, err := os.Open(src)
+	srcF, err := os.Open(src) //nolint:gosec // intentional: path comes from user config
 	if err != nil {
 		return err
 	}
-	//nolint:errcheck
+	//nolint:errcheck // intentional: defer close after successful open, error not actionable
 	defer srcF.Close()
 
 	info, err := srcF.Stat()
@@ -20,11 +21,11 @@ func CopyFile(dst, src string) error {
 		return err
 	}
 
-	dstF, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, info.Mode())
+	dstF, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, info.Mode()) //nolint:gosec // intentional: path comes from user config
 	if err != nil {
 		return err
 	}
-	//nolint:errcheck
+	//nolint:errcheck // intentional: defer close after successful open, error not actionable
 	defer dstF.Close()
 
 	if _, err := io.Copy(dstF, srcF); err != nil {
@@ -33,8 +34,8 @@ func CopyFile(dst, src string) error {
 	return nil
 }
 
+// CheckFileExists checks if a file exists and is not a directory.
 func CheckFileExists(name string) error {
-
 	exists, err := FileExists(name)
 	if err != nil {
 		return err
@@ -61,6 +62,7 @@ func FileExists(name string) (bool, error) {
 	return true, nil
 }
 
+// CheckFileOrDirExists checks if a file or directory exists.
 func CheckFileOrDirExists(name string) (dir bool, err error) {
 	// Try to obtain the file information.
 	fileInfo, err := os.Stat(name)

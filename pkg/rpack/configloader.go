@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// RPack file extensions and suffixes.
 const (
 	RPackFileSuffix     = ".rpack.yaml"
 	RPackLockFileSuffix = ".rpack.lock.yaml"
@@ -47,7 +48,7 @@ func LoadRPackConfig(name string) (*RPackConfigInstance, error) {
 	if !trimmed {
 		return nil, errors.Errorf("RPack filename does not ends in %s: %s", RPackFileSuffix, configFileName)
 	}
-	lockFileName = lockFileName + RPackLockFileSuffix
+	lockFileName += RPackLockFileSuffix
 	lockFilePath := filepath.Join(configPath, lockFileName)
 
 	var lockFile *RPackLockFile
@@ -73,7 +74,7 @@ func LoadRPackConfig(name string) (*RPackConfigInstance, error) {
 }
 
 func loadRPackFile(name string) (*RPackConfig, error) {
-	b, err := os.ReadFile(name)
+	b, err := os.ReadFile(name) //nolint:gosec // intentional: path comes from user config
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to open file: %s", name)
 	}
@@ -86,7 +87,7 @@ func loadRPackFile(name string) (*RPackConfig, error) {
 }
 
 func loadRPackLockFile(name string) (*RPackLockFile, error) {
-	b, err := os.ReadFile(name)
+	b, err := os.ReadFile(name) //nolint:gosec // intentional: path comes from user config
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to open file: %s", name)
 	}
@@ -98,12 +99,13 @@ func loadRPackLockFile(name string) (*RPackLockFile, error) {
 	return &c, nil
 }
 
+// WriteFile writes the lock file content to the given path.
 func (l *RPackLockFile) WriteFile(name string) error {
 	b, err := yaml.Marshal(l)
 	if err != nil {
 		return errors.Wrap(err, "Failed to marshal lockfile")
 	}
-	err = os.WriteFile(name, b, 0666)
+	err = os.WriteFile(name, b, 0o666) //nolint:gosec // intentional: standard file permissions for package manager output
 	if err != nil {
 		return errors.Wrap(err, "Failed to write lockfile")
 	}

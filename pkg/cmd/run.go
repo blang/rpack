@@ -1,13 +1,12 @@
-/*
-Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-*/
+// Package cmd implements the run command.
 package cmd
 
 import (
 	"context"
 
-	"github.com/blang/rpack/pkg/rpack"
 	"github.com/spf13/cobra"
+
+	"github.com/blang/rpack/pkg/rpack"
 )
 
 // runCmd represents the run command

@@ -1,0 +1,105 @@
+version: "2"
+
+issues:
+  max-same-issues: 50
+
+formatters:
+  enable:
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/blang/rpack
+
+linters:
+  enable:
+    # Bug detection
+    - bodyclose
+    - asciicheck
+    - bidichk
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errorlint
+    - gocheckcompilerdirectives
+    - govet
+    - ineffassign
+    - nilerr
+    - nilnil
+    - staticcheck
+    - unused
+
+    # Security
+    - gosec
+
+    # Code quality
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - revive
+    - unconvert
+    - unparam
+
+    # Style/consistency
+    - errname
+    - gomoddirectives
+    - misspell
+    - nakedret
+    - predeclared
+    - whitespace
+
+    # Modern Go
+    - modernize
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+
+    gocognit:
+      min-complexity: 20
+
+    gocyclo:
+      min-complexity: 15
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+
+    govet:
+      enable-all: true
+
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+        - name: var-naming
+
+    nakedret:
+      max-func-lines: 30
+
+  exclusions:
+    paths:
+      - dist
+      - lua
+
+run:
+  timeout: 5m
+  tests: true

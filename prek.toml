@@ -1,0 +1,80 @@
+fail_fast = false
+
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+
+[[repos.hooks]]
+id = "check-yaml"
+
+[[repos.hooks]]
+id = "check-json"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+args = ["--maxkb=1024"]
+
+[[repos.hooks]]
+id = "detect-private-key"
+
+[[repos.hooks]]
+id = "check-case-conflict"
+
+[[repos.hooks]]
+id = "mixed-line-ending"
+args = ["--fix=lf"]
+
+[[repos.hooks]]
+id = "fix-byte-order-marker"
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "go-fmt"
+name = "go-fmt"
+entry = "gofmt"
+language = "system"
+types = ["go"]
+args = ["-w"]
+
+[[repos.hooks]]
+id = "go-imports"
+name = "go-imports"
+entry = "goimports"
+language = "system"
+types = ["go"]
+args = ["-w"]
+
+[[repos.hooks]]
+id = "golangci-lint"
+name = "golangci-lint"
+entry = "golangci-lint"
+language = "system"
+types = ["go"]
+args = ["run"]
+pass_filenames = false
+always_run = true
+
+
+
+[[repos.hooks]]
+id = "go-mod-tidy"
+name = "go-mod-tidy"
+entry = "go"
+language = "system"
+types = ["go"]
+args = ["mod", "tidy"]
+pass_filenames = false
+always_run = true

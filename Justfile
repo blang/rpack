@@ -37,13 +37,21 @@ goimports:
     goimports -w ./
 
 check:
-    go vet ./...
     golangci-lint run
+
+lint: check
+
+lint-fix:
+    golangci-lint run --fix
+
+lint-ci:
+    golangci-lint run --out-format=line-number
 
 ldoc:
     cd ./lua && ldoc ./src -d ./docs/gen
 
 vet:
+    go vet ./...
 
 test:
     go test -v ./...
@@ -99,4 +107,10 @@ build-all:
         
         tar -C "{{dist_dir}}" -czf "$output.tar.gz" "$binary"
     done
+
+prek-install:
+    prek install
+
+prek-run:
+    prek run --all-files
 

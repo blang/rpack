@@ -1,6 +1,6 @@
 module github.com/blang/rpack
 
-go 1.24.1
+go 1.26.2
 
 require (
 	cuelang.org/go v0.12.1

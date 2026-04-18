@@ -42,7 +42,7 @@ just prek-run     # run all pre-commit hooks on all files
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Go | 1.24.13 | go.mod; mise.toml |
+| Go | 1.26.2 | go.mod; mise.toml |
 | golangci-lint | 2.11.4 | `.golangci.yml` |
 | goimports | 0.44.0 | `go:golang.org/x/tools/cmd/goimports` |
 | prek | 0.3.8 | `prek.toml` |

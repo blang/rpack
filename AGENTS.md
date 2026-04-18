@@ -13,7 +13,13 @@ just testlua      # go test -v -test.run '.*Lua.*' ./...
 just lint         # golangci-lint run (alias: just check)
 just lint-fix     # golangci-lint run --fix
 just lint-ci      # golangci-lint run --out-format=line-number
-just fix          # goimports -w ./ + go mod tidy
+just lint-lua     # selene + stylua --check on lua/src/
+just lint-lua-fix # stylua auto-format on lua/src/
+just lint-cue     # cue fmt --check on all .cue files
+just lint-cue-fix # cue fmt auto-format on all .cue files
+just lint-yaml    # yamllint -s .
+just lint-all     # run all linters (Go, Lua, CUE, YAML)
+just fix          # goimports + stylua + cue fmt + go mod tidy
 just build        # cross-compile to dist/ (default linux/amd64)
 just build-all    # all platforms (linux/darwin, amd64/arm64)
 just example      # build + run examples/basic/root/basic.rpack.yaml
@@ -32,22 +38,32 @@ just prek-run     # run all pre-commit hooks on all files
 
 ## Tooling
 
-Tools managed by mise (run `mise install` to set up):
+**All tools must be installed exclusively via `mise`.** Do not use brew, apt, pip, or other package managers. Run `mise install` to set up all tools.
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Go | 1.24.1 | go.mod; mise.toml uses `"1.24"` |
+| Go | 1.24 | go.mod; mise.toml |
 | golangci-lint | 2 | `.golangci.yml` |
 | goimports | latest | `go:golang.org/x/tools/cmd/goimports` |
 | prek | 0.3 | `prek.toml` |
+| selene | latest | `aqua:Kampfkarren/selene`; `selene.toml` |
+| stylua | latest | `.stylua.toml` |
+| cue | latest | CUE schema formatter/validator |
+| yamllint | latest | `.yamllint.yml` |
 
 `mise activate` auto-installs pre-commit hooks via the `enter` hook.
 
 ## Linting
 
-golangci-lint v2 config (`.golangci.yml`): 30 linters including `modernize`, `gocritic`, `revive`, `gosec`. Excludes `dist/` and `lua/` directories. Complexity thresholds: gocyclo 15, gocognit 20.
+**Go**: golangci-lint v2 config (`.golangci.yml`): 30 linters including `modernize`, `gocritic`, `revive`, `gosec`. Excludes `dist/` and `lua/` directories. Complexity thresholds: gocyclo 15, gocognit 20.
 
-Pre-commit hooks (prek): builtin file checks + local Go hooks (gofmt, goimports, golangci-lint, go-mod-tidy).
+**Lua**: selene for linting (`selene.toml`, std `lua51`, excludes stub files), stylua for formatting (`.stylua.toml`, 4-space indent, 120-column width).
+
+**CUE**: `cue fmt --check` validates formatting of all `.cue` files. Schema validation is done by Go code at runtime.
+
+**YAML**: yamllint (`.yamllint.yml`, strict mode, 120-column width, excludes `.serena/` and `dist/`).
+
+Pre-commit hooks (prek): builtin file checks + local hooks for Go (gofmt, goimports, golangci-lint, go-mod-tidy), Lua (selene, stylua --check), CUE (cue fmt --check), and YAML (yamllint).
 
 ## Build
 
@@ -62,5 +78,6 @@ Tests are co-located (`*_test.go` in same package). Run all: `just test`. Run Lu
 - Logging: `slog` with `devslog` for colored output
 - Task runner: `just` (not make)
 - Git hooks: `prek` (not pre-commit)
+- Tool installation: `mise` only (not brew, apt, pip, or other package managers)
 - Scripting: Lua (not JS); `lua/` dir excluded from Go linting
-- `.serena/` excluded via `.git/info/exclude` (not `.gitignore`)
+- `.serena/` and `cue.mod/` excluded via `.git/info/exclude` (not `.gitignore`)

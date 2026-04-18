@@ -1,11 +1,11 @@
 // Optional schema file
 #Schema: {
-    values: #Values
-    inputs: #Inputs
+	values: #Values
+	inputs: #Inputs
 }
 
 #Values: {
-    author: string
+	author: string
 }
 
 #Inputs: [string]: string

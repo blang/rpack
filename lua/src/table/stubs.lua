@@ -2,7 +2,6 @@
 --- local table = require("table")
 --- @module table
 
-
 local table = {}
 
 ---
@@ -10,8 +9,7 @@ local table = {}
 --
 -- @param tbl table The Lua table to inspect.
 -- @return number # The number of elements in the table.
-function table.getn(tbl)
-end
+function table.getn(tbl) end
 
 ---
 -- Concatenates the elements of a table to form a string.
@@ -22,8 +20,7 @@ end
 -- @param i? number   The start index (default 1).
 -- @param j? number   The end index (default #tbl).
 -- @return string     # The concatenated string.
-function table.concat(tbl, sep, i, j)
-end
+function table.concat(tbl, sep, i, j) end
 
 ---
 -- Inserts a value into the table.
@@ -34,16 +31,14 @@ end
 -- @param posOrValue any     If only two parameters, this is the value to append.
 --                           If three parameters, this is the position.
 -- @param value? any         The value to insert when inserting by position.
-function table.insert(tbl, posOrValue, value)
-end
+function table.insert(tbl, posOrValue, value) end
 
 ---
 -- Returns the largest numeric index in the table.
 --
 -- @param tbl table The Lua table to inspect.
 -- @return number # The maximum numeric index.
-function table.maxn(tbl)
-end
+function table.maxn(tbl) end
 
 ---
 -- Removes an element from a table, shifting down other elements if necessary.
@@ -52,8 +47,7 @@ end
 -- @param tbl table  The table from which to remove an element.
 -- @param pos? number The position to remove. If not given, removes the last element.
 -- @return any # The removed element.
-function table.remove(tbl, pos)
-end
+function table.remove(tbl, pos) end
 
 ---
 -- Sorts the table in-place. By default, sorts in ascending order.
@@ -62,7 +56,6 @@ end
 --
 -- @param tbl table The table to sort.
 -- @param comp? function|nil Optional comparison function.
-function table.sort(tbl, comp)
-end
+function table.sort(tbl, comp) end
 
 return table

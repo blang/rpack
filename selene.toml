@@ -1,0 +1,12 @@
+std = "lua51"
+
+exclude = [
+    "lua/src/builtins.lua",
+    "lua/src/debug/stubs.lua",
+    "lua/src/math/stubs.lua",
+    "lua/src/string/stubs.lua",
+    "lua/src/table/stubs.lua",
+]
+
+[lints]
+unused_variable = "allow"

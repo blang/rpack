@@ -13,16 +13,14 @@
 -- @param i? number The starting index (default 1).
 -- @param j? number The ending index (default is i if not provided).
 -- @return ... number The numerical codes of the characters.
-function string.byte(s, i, j)
-end
+function string.byte(s, i, j) end
 
 ---
 -- Returns a string created from the given list of numerical codes.
 --
 -- @param ... number One or more numerical codes.
 -- @return string The resulting string.
-function string.char(...)
-end
+function string.char(...) end
 
 ---
 -- Returns a binary representation of the given function.
@@ -30,8 +28,7 @@ end
 --
 -- @param f function The function to dump.
 -- @return nil
-function string.dump(f)
-end
+function string.dump(f) end
 
 ---
 -- Searches for the first match of pattern in the string.
@@ -44,8 +41,7 @@ end
 -- @return number|nil The starting index of the match, or nil if not found.
 -- @return number|nil The ending index of the match.
 -- @return ... string Any captured substrings.
-function string.find(s, pattern, init, plain)
-end
+function string.find(s, pattern, init, plain) end
 
 ---
 -- Returns a formatted version of its variable number of arguments.
@@ -54,8 +50,7 @@ end
 -- @param fmt string A format string.
 -- @param ... any Values to substitute into the format.
 -- @return string The formatted string.
-function string.format(fmt, ...)
-end
+function string.format(fmt, ...) end
 
 ---
 -- Returns a copy of s in which all (or the first n, if given) occurrences of the pattern have been replaced by a replacement.
@@ -67,24 +62,21 @@ end
 -- @param n? number The maximum number of substitutions (default is all).
 -- @return string The modified string.
 -- @return number The number of substitutions made.
-function string.gsub(s, pattern, repl, n)
-end
+function string.gsub(s, pattern, repl, n) end
 
 ---
 -- Returns the length of s.
 --
 -- @param s string The subject string.
 -- @return number The length of the string.
-function string.len(s)
-end
+function string.len(s) end
 
 ---
 -- Returns a copy of s with all uppercase letters transformed to lowercase.
 --
 -- @param s string The subject string.
 -- @return string The lowercased string.
-function string.lower(s)
-end
+function string.lower(s) end
 
 ---
 -- Returns the first match of pattern in s.
@@ -94,8 +86,7 @@ end
 -- @param pattern string The pattern to match.
 -- @param init? number The optional starting position (default is 1).
 -- @return string|nil The matched string or captured values, or nil if no match.
-function string.match(s, pattern, init)
-end
+function string.match(s, pattern, init) end
 
 ---
 -- Returns a string that is the concatenation of s repeated n times.
@@ -103,16 +94,14 @@ end
 -- @param s string The subject string.
 -- @param n number The number of times to repeat.
 -- @return string The repeated string.
-function string.rep(s, n)
-end
+function string.rep(s, n) end
 
 ---
 -- Returns a string that is the reverse of s.
 --
 -- @param s string The subject string.
 -- @return string The reversed string.
-function string.reverse(s)
-end
+function string.reverse(s) end
 
 ---
 -- Returns the substring of s that starts at i and continues until j.
@@ -121,16 +110,14 @@ end
 -- @param i number The starting index.
 -- @param j? number The ending index (default is the end of the string).
 -- @return string The specified substring.
-function string.sub(s, i, j)
-end
+function string.sub(s, i, j) end
 
 ---
 -- Returns a copy of s with all lowercase letters transformed to uppercase.
 --
 -- @param s string The subject string.
 -- @return string The uppercased string.
-function string.upper(s)
-end
+function string.upper(s) end
 
 ---
 -- Returns an iterator function that, each time it is called, returns the next substring of s that matches the pattern.
@@ -139,8 +126,7 @@ end
 -- @param s string The subject string.
 -- @param pattern string The pattern to match.
 -- @return function An iterator function.
-function string.gmatch(s, pattern)
-end
+function string.gmatch(s, pattern) end
 
 -- Alias for string.gmatch.
 string.gfind = string.gmatch

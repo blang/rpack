@@ -78,3 +78,39 @@ types = ["go"]
 args = ["mod", "tidy"]
 pass_filenames = false
 always_run = true
+
+[[repos.hooks]]
+id = "lua-lint"
+name = "lua-lint (selene)"
+entry = "selene"
+language = "system"
+types = ["lua"]
+args = ["lua/src/"]
+pass_filenames = false
+
+[[repos.hooks]]
+id = "lua-format"
+name = "lua-format (stylua)"
+entry = "stylua"
+language = "system"
+types = ["lua"]
+args = ["--check", "lua/src/"]
+pass_filenames = false
+
+[[repos.hooks]]
+id = "cue-fmt"
+name = "cue-fmt"
+entry = "cue"
+language = "system"
+files = "\\.cue$"
+args = ["fmt", "--check"]
+pass_filenames = true
+
+[[repos.hooks]]
+id = "yaml-lint"
+name = "yaml-lint (yamllint)"
+entry = "yamllint"
+language = "system"
+types = ["yaml"]
+args = ["-s", "."]
+pass_filenames = false

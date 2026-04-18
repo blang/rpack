@@ -31,6 +31,8 @@ dev: goimports build run
 
 fix:
     just goimports
+    just lint-lua-fix
+    just lint-cue-fix
     just tidy
 
 goimports:
@@ -46,6 +48,24 @@ lint-fix:
 
 lint-ci:
     golangci-lint run --out-format=line-number
+
+lint-lua:
+    selene lua/src/
+    stylua --check lua/src/
+
+lint-lua-fix:
+    stylua lua/src/
+
+lint-cue:
+    find . -name "*.cue" -not -path "*/cue.mod/*" -exec cue fmt --check {} \;
+
+lint-cue-fix:
+    find . -name "*.cue" -not -path "*/cue.mod/*" -exec cue fmt {} \;
+
+lint-yaml:
+    yamllint -s .
+
+lint-all: lint lint-lua lint-cue lint-yaml
 
 ldoc:
     cd ./lua && ldoc ./src -d ./docs/gen

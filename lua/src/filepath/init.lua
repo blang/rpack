@@ -16,7 +16,7 @@ local filepath = {}
 -- @param path string The path string.
 -- @return string The base (last element) of the path.
 function filepath.base(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -31,7 +31,7 @@ end
 -- @param path string The path string to clean.
 -- @return string The cleaned path.
 function filepath.clean(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -43,7 +43,7 @@ end
 -- @param path string The path string.
 -- @return string The directory portion of the path.
 function filepath.dir(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -55,7 +55,7 @@ end
 -- @param path string The path string.
 -- @return string The file extension (including the dot) or an empty string if none.
 function filepath.ext(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -66,7 +66,7 @@ end
 -- @param path string The path string.
 -- @return boolean True if the path is absolute, false otherwise.
 function filepath.isAbs(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -78,7 +78,7 @@ end
 -- @param path string The path string.
 -- @return boolean True if the path is local, false otherwise.
 function filepath.isLocal(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -95,7 +95,7 @@ end
 -- @param ... string Additional path segments.
 -- @return string The joined path string.
 function filepath.join(first, second, ...)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -108,7 +108,7 @@ end
 -- @return string The directory part of the path.
 -- @return string The file part of the path.
 function filepath.split(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 ---
@@ -123,7 +123,7 @@ end
 -- @return string The location specifier such as "map", or "target" if none is found.
 -- @return string The path part without the location, such as "./inputdir"
 function filepath.location(path)
-  -- actual implementation in Go backend
+    -- actual implementation in Go backend
 end
 
 return filepath

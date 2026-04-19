@@ -1,8 +1,12 @@
 # RPack
 
-A package manager for files — distribute versioned bundles of templated files with Lua scripting.
+A package manager for files — bundle files with Lua scripting and CUE validation, distribute them via git/https/s3, and apply them with user-specific values and inputs.
+
+An **rpack author** creates a bundle containing templates, a Lua script, and an optional CUE schema. An **rpack user** references the bundle in a config file, provides values and input files, and runs `rpack run` to generate output files.
 
 Think [Helm](https://helm.sh/) for arbitrary files, [vendir](https://carvel.dev/vendir/) with templating, or [kustomize](https://github.com/kubernetes-sigs/kustomize) but scriptable.
+
+Use cases: distribute templated config files across repositories, package dotfiles as versioned bundles, share GitHub Actions workflows or pre-commit configs, migrate repositories deterministically.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/blang/rpack.svg)](https://pkg.go.dev/github.com/blang/rpack)
 [![Go Report Card](https://goreportcard.com/badge/github.com/blang/rpack)](https://goreportcard.com/report/github.com/blang/rpack)
@@ -33,6 +37,110 @@ rpack run --dry-run ./example.rpack.yaml
 # Apply
 rpack run ./example.rpack.yaml
 ```
+
+## Worked example
+
+This example shows the full flow: an rpack bundle that copies a static file, reads user data, and templates output.
+
+### RPack bundle (`rpackdef/`)
+
+The author creates a directory with these files:
+
+**`rpack.yaml`** — declares the bundle name and what inputs it expects:
+```yaml
+"@schema_version": "v1"
+name: "intro"
+inputs:
+  - name: users.yaml
+    type: file
+```
+
+**`script.lua`** — the Lua script that processes files:
+```lua
+local rpack = require("rpack.v1")
+local values = rpack.values()
+
+-- Copy a bundled file to the target directory
+rpack.copy("rpack:files/intro.md", "./rpack_intro.md")
+
+-- Read user input, template, and write output
+local users = rpack.from_yaml(rpack.read("map:users.yaml"))
+local output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), {
+    users = users,
+    author = values.author,
+})
+rpack.write("./rpack_users.md", output)
+```
+
+**`schema.cue`** (optional) — validates the user's values:
+```cue
+#Schema: {
+    author!: string
+}
+```
+
+**`files/intro.md`** — a static file bundled with the rpack:
+```markdown
+# RPack Intro
+
+This file was created because you applied the intro rpack.
+```
+
+**`files/users.md.tmpl`** — a Go text/template that uses the user's data:
+```markdown
+# Users
+
+Author: {{ .author }}
+{{ range .users -}}
+- {{ .firstname }} {{ .lastname }}{{ if .email }} <{{ .email }}>{{ end }}
+{{ end -}}
+```
+
+### User side
+
+The user creates a config and provides input files:
+
+**`intro.rpack.yaml`**:
+```yaml
+"@schema_version": "v1"
+source: "../rpackdef"
+config:
+  values:
+    author: blang
+  inputs:
+    "users.yaml": ./myusers.yaml
+```
+
+**`myusers.yaml`** — the input file mapped to `users.yaml`:
+```yaml
+- firstname: Alice
+  lastname: Johnson
+  email: alice.johnson@example.com
+- firstname: Bob
+  lastname: Smith
+```
+
+### Result
+
+Running `rpack run ./intro.rpack.yaml` produces:
+
+**`rpack_intro.md`** — copied from the bundle:
+```markdown
+# RPack Intro
+
+This file was created because you applied the intro rpack.
+```
+
+**`rpack_users.md`** — generated from the template:
+```markdown
+# Users
+
+Author: blang
+- Alice Johnson <alice.johnson@example.com>
+- Bob Smith
+```
+
+A lockfile is also written alongside the config, tracking all managed files with SHA256 checksums.
 
 ## Concepts
 
@@ -110,64 +218,6 @@ The `rpack.v1` module is the scripting interface:
 |----------|-----------|-------------|
 | `values` | `values() → table` | User-supplied config values. |
 | `inputs` | `inputs() → table` | List of user-supplied input names. |
-
-## Worked example
-
-**RPack bundle** (`rpackdef/`):
-
-`rpack.yaml` — declares inputs:
-```yaml
-"@schema_version": "v1"
-name: "intro"
-inputs:
-  - name: users.yaml
-    type: file
-```
-
-`script.lua` — processes files:
-```lua
-local rpack = require("rpack.v1")
-local values = rpack.values()
-
--- Copy a bundled file to the target directory
-rpack.copy("rpack:files/intro.md", "./rpack_intro.md")
-
--- Read user input, template, and write output
-local users = rpack.from_yaml(rpack.read("map:users.yaml"))
-local output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), {
-    users = users,
-    author = values.author,
-})
-rpack.write("./rpack_users.md", output)
-```
-
-`schema.cue` (optional) — validates user values:
-```cue
-#Schema: {
-    author!: string
-}
-```
-
-`files/` — bundled templates and static files.
-
-**User side**:
-
-`intro.rpack.yaml`:
-```yaml
-"@schema_version": "v1"
-source: "../rpackdef"
-config:
-  values:
-    author: blang
-  inputs:
-    "users.yaml": ./myusers.yaml
-```
-
-```shell
-rpack run ./intro.rpack.yaml
-```
-
-Creates `rpack_intro.md`, `rpack_users.md`, and a lockfile alongside the config.
 
 ## Creating an rpack
 

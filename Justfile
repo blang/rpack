@@ -101,6 +101,7 @@ build platform="linux/amd64/-":
 
     CGO_ENABLED="0" GOOS=$os GOARCH=$arch $([ "$arm" != "-" ] && echo "GOARM=$arm") \
     go build \
+        -trimpath \
         -ldflags '{{ld_flags}}' \
         -o "$output" \
         ./cmd/rpack
@@ -121,6 +122,7 @@ build-all:
 
         CGO_ENABLED=0 GOOS=$os GOARCH=$arch $([ "$arm" != "-" ] && echo "GOARM=$arm") \
         go build \
+            -trimpath \
             -ldflags '{{ld_flags}}' \
             -o "$output" \
             ./cmd/rpack
@@ -133,3 +135,10 @@ prek-install:
 
 prek-run:
     prek run --all-files
+
+# Release — auto-detects version from the latest git tag.
+# Requires: git tag already created and pushed, gh CLI authenticated.
+# Example: git tag v0.2.0 && git push origin v0.2.0 && just release
+release:
+    #!/usr/bin/env sh
+    ./scripts/release.sh

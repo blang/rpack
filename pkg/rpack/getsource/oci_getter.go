@@ -26,10 +26,11 @@ const ociManifestSizeLimitMiB = 4
 
 // OCIRepositoryStore is the interface for interacting with a single OCI
 // Distribution repository. Implementations handle authentication and
-// provide tag resolution and blob fetching.
+// provide reference resolution and blob fetching.
 type OCIRepositoryStore interface {
-	// Resolve finds the descriptor for the given tag name.
-	Resolve(ctx context.Context, tagName string) (ociv1.Descriptor, error)
+	// Resolve finds the descriptor for the given reference, which may be
+	// a tag name or a digest string.
+	Resolve(ctx context.Context, reference string) (ociv1.Descriptor, error)
 
 	// Fetch retrieves the blob content for the given descriptor.
 	// Callers MUST close the returned reader.
@@ -121,6 +122,9 @@ func (g *ociDistributionGetter) resolveRepositoryRef(u *url.URL) (*orasRegistry.
 	}
 	registryDomainName := u.Host
 	repositoryName := strings.TrimPrefix(u.Path, "/")
+	if repositoryName == "" {
+		return nil, fmt.Errorf("OCI source requires a repository path")
+	}
 	ref := &orasRegistry.Reference{
 		Registry:   registryDomainName,
 		Repository: repositoryName,
@@ -158,7 +162,6 @@ func (g *ociDistributionGetter) resolveManifestDescriptor(ctx context.Context, r
 	if desc.MediaType != ociv1.MediaTypeImageManifest {
 		return ociv1.Descriptor{}, fmt.Errorf("selected object is not an OCI image manifest")
 	}
-	desc.ArtifactType = OCIArtifactType
 	return desc, nil
 }
 
@@ -216,11 +219,6 @@ func parseOCIQuery(ref *orasRegistry.Reference, query url.Values) (wantTag strin
 //
 //nolint:gocritic // desc is OCI standard type passed by value
 func (g *ociDistributionGetter) fetchOCIManifest(ctx context.Context, desc ociv1.Descriptor, store OCIRepositoryStore) (*ociv1.Manifest, error) {
-	return fetchOCIManifest(ctx, desc, store)
-}
-
-//nolint:gocritic // desc is OCI standard type passed by value
-func fetchOCIManifest(ctx context.Context, desc ociv1.Descriptor, store OCIRepositoryStore) (*ociv1.Manifest, error) {
 	if (desc.Size / 1024 / 1024) > ociManifestSizeLimitMiB {
 		return nil, fmt.Errorf("manifest size exceeds RPack's limit of %d MiB", ociManifestSizeLimitMiB)
 	}
@@ -253,8 +251,8 @@ func fetchOCIManifest(ctx context.Context, desc ociv1.Descriptor, store OCIRepos
 	if manifest.MediaType != desc.MediaType {
 		return nil, fmt.Errorf("unexpected manifest media type %q", manifest.MediaType)
 	}
-	if manifest.ArtifactType != desc.ArtifactType {
-		return nil, fmt.Errorf("unexpected artifact type %q (expected %q)", manifest.ArtifactType, desc.ArtifactType)
+	if manifest.ArtifactType != OCIArtifactType {
+		return nil, fmt.Errorf("unexpected artifact type %q (expected %q)", manifest.ArtifactType, OCIArtifactType)
 	}
 	return &manifest, nil
 }
@@ -292,11 +290,6 @@ func selectOCILayer(descs []ociv1.Descriptor) (ociv1.Descriptor, error) {
 //
 //nolint:gocritic // desc is OCI standard type passed by value
 func (g *ociDistributionGetter) fetchOCIBlobToTempFile(ctx context.Context, desc ociv1.Descriptor, store orasContent.Fetcher) (string, error) {
-	return fetchOCIBlobToTempFile(ctx, desc, store)
-}
-
-//nolint:gocritic // desc is OCI standard type passed by value
-func fetchOCIBlobToTempFile(ctx context.Context, desc ociv1.Descriptor, store orasContent.Fetcher) (string, error) {
 	f, err := os.CreateTemp("", "rpack-module")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary file: %w", err)

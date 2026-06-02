@@ -313,8 +313,8 @@ type digestResolvingInMemoryOCIStore struct {
 	*orasMemory.Store
 }
 
-func (s *digestResolvingInMemoryOCIStore) Resolve(ctx context.Context, tagName string) (ociv1.Descriptor, error) {
-	return s.Store.Resolve(ctx, tagName)
+func (s *digestResolvingInMemoryOCIStore) Resolve(ctx context.Context, reference string) (ociv1.Descriptor, error) {
+	return s.Store.Resolve(ctx, reference)
 }
 
 //nolint:gocritic // target is OCI standard type passed by value

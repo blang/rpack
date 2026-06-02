@@ -10,9 +10,9 @@ import (
 
 // Fetcher downloads sources using go-getter with curated configuration.
 type Fetcher struct {
-	// OCIRepositoryStore is an optional factory for creating OCI repository
+	// NewOCIRepositoryStore is an optional factory for creating OCI repository
 	// stores. When nil, OCI sources are unavailable.
-	OCIRepositoryStore func(ctx context.Context, registryDomain, repositoryName string) (OCIRepositoryStore, error)
+	NewOCIRepositoryStore func(ctx context.Context, registryDomain, repositoryName string) (OCIRepositoryStore, error)
 
 	httpClient *http.Client
 }
@@ -39,10 +39,10 @@ func (f *Fetcher) Fetch(ctx context.Context, destDir, sourceAddr string) error {
 	getters["http"] = httpGetter
 	getters["https"] = httpGetter
 
-	// OCI getter (only if OCIRepositoryStore is configured)
-	if f.OCIRepositoryStore != nil {
+	// OCI getter (only if NewOCIRepositoryStore is configured)
+	if f.NewOCIRepositoryStore != nil {
 		getters["oci"] = &ociDistributionGetter{
-			getOCIRepositoryStore: f.OCIRepositoryStore,
+			getOCIRepositoryStore: f.NewOCIRepositoryStore,
 		}
 	}
 

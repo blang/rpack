@@ -10,17 +10,24 @@ import (
 
 // Fetcher downloads sources using go-getter with curated configuration.
 type Fetcher struct {
-	// NewOCIRepositoryStore is an optional factory for creating OCI repository
-	// stores. When nil, OCI sources are unavailable.
+	// NewOCIRepositoryStore is a factory for creating OCI repository stores.
+	// When nil, OCI sources are unavailable.
+	// DefaultFetcher sets this to use the standard credential chain
+	// (Podman, Docker config, env vars, credential helpers).
 	NewOCIRepositoryStore func(ctx context.Context, registryDomain, repositoryName string) (OCIRepositoryStore, error)
 
 	httpClient *http.Client
 }
 
-// DefaultFetcher creates a Fetcher with no OCI support and a default HTTP client.
+// DefaultFetcher creates a Fetcher with standard OCI credential support
+// (reading from Podman, Docker config, env vars, and credential helpers)
+// and a default HTTP client.
 func DefaultFetcher() *Fetcher {
 	return &Fetcher{
 		httpClient: http.DefaultClient,
+		NewOCIRepositoryStore: func(ctx context.Context, registryDomain, repositoryName string) (OCIRepositoryStore, error) {
+			return NewORASStore(registryDomain, repositoryName)
+		},
 	}
 }
 

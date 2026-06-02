@@ -1,14 +1,15 @@
 package rpack
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
 	"log/slog"
 
-	"github.com/hashicorp/go-getter"
 	"github.com/pkg/errors"
 
+	"github.com/blang/rpack/pkg/rpack/getsource"
 	"github.com/blang/rpack/pkg/rpack/util"
 )
 
@@ -116,7 +117,8 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 
 	// Setup source path
 	packSourcePath := filepath.Join(packCachePath, RPackCacheDirSource)
-	// Do not create last part of path, since go-getter is required to create it , since it creates symlinks for local references
+	// Do not create last part of path, since the fetcher is required to create it,
+	// since it creates symlinks for local references
 	err = os.MkdirAll(filepath.Dir(packSourcePath), 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not setup source path %s", packSourcePath)
@@ -158,13 +160,8 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 
 	slog.Debug("Load RPackDef", "source", packSourcePath, "dest", ci.Config.Source)
 	// Load RPackDef into source folder
-	client := &getter.Client{
-		Src:  packageAddr,
-		Dst:  packSourcePath,
-		Mode: getter.ClientModeDir,
-		Pwd:  execPath,
-	}
-	err = client.Get()
+	fetcher := getsource.DefaultFetcher()
+	err = fetcher.Fetch(context.Background(), packSourcePath, packageAddr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Could not get source %q", ci.Config.Source)
 	}
@@ -191,16 +188,13 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 }
 
 func extractPackageAddrSubDir(src string) (pkgDir, subDir string, err error) {
-	result, err := getter.Detect(src, "", getter.Detectors)
+	result, err := getsource.NormalizeSource(src)
 	if err != nil {
-		return "", "", errors.Wrap(err, "Go getter detection failed")
+		return "", "", errors.Wrap(err, "Source detection failed")
 	}
 	slog.Debug("Detect source", "result", result)
 
-	packageAddr, subDir := getter.SourceDirSubdir(result)
-	if subDir != "" {
-		subDir = filepath.Clean(subDir)
-	}
+	packageAddr, subDir := getsource.SplitSourceSubdir(result)
 	return packageAddr, subDir, nil
 }
 

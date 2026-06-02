@@ -7,6 +7,47 @@ import (
 	"testing"
 )
 
+func TestExtractPackageAddrSubDir_LocalPath(t *testing.T) {
+	pkgDir, subDir, err := extractPackageAddrSubDir("./some/local/module")
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if pkgDir == "" {
+		t.Fatal("expected non-empty package dir")
+	}
+	t.Logf("pkgDir=%s subDir=%s", pkgDir, subDir)
+}
+
+func TestExtractPackageAddrSubDir_GitHub(t *testing.T) {
+	pkgDir, subDir, err := extractPackageAddrSubDir("github.com/user/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if pkgDir == "" {
+		t.Fatal("expected non-empty package dir")
+	}
+	t.Logf("pkgDir=%s subDir=%s", pkgDir, subDir)
+}
+
+func TestExtractPackageAddrSubDir_GitHubWithSubdir(t *testing.T) {
+	pkgDir, subDir, err := extractPackageAddrSubDir("github.com/user/repo//subdir")
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if subDir != "subdir" {
+		t.Fatalf("expected subdir 'subdir', got %q", subDir)
+	}
+	t.Logf("pkgDir=%s subDir=%s", pkgDir, subDir)
+}
+
+func TestExtractPackageAddrSubDir_RelativePathError(t *testing.T) {
+	_, _, err := extractPackageAddrSubDir("some/naked/relative/path")
+	if err == nil {
+		t.Fatal("expected error for bare relative path")
+	}
+	t.Logf("expected error: %s", err)
+}
+
 // TestResolveRPackInputs tests the ResolveRPackInputs function.
 //
 //nolint:gocognit,gocyclo // test: table-driven test with many cases

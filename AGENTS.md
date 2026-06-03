@@ -81,3 +81,12 @@ Tests are co-located (`*_test.go` in same package). Run all: `just test`. Run Lu
 - Tool installation: `mise` only (not brew, apt, pip, or other package managers)
 - Scripting: Lua (not JS); `lua/` dir excluded from Go linting
 - `.serena/` and `cue.mod/` excluded via `.git/info/exclude` (not `.gitignore`)
+
+## Gotchas
+
+- **Import cycle**: `pkg/rpack` imports `pkg/rpack/getsource`, so getsource cannot import rpack. Cross-package logic must go in `pkg/cmd/` which imports both freely.
+- **Pre-commit amends files**: prek auto-fixes trailing whitespace and EOF newlines; commits fail on first attempt. Always re-`git add` and re-commit.
+- **CUE schemas embedded**: `def_schema.cue` and `schema.cue` are `//go:embed`'d at compile time — no runtime schema changes.
+- **Docker Hub key mismatch**: ORAS resolves `registry-1.docker.io` → `https://index.docker.io/v1/`, but Podman stores credentials under `docker.io`. Credential stores must alias all three.
+- **Linter complexity**: `gocyclo 15`, `gocognit 20` — file-walking functions with writer chains will need `//nolint:gocognit,gocyclo`.
+- **Flag scope**: Use `.Flags()` for command-specific flags, `.PersistentFlags()` only on root or when inheritance is intended. `PersistentFlags` propagates to subcommands.

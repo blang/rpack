@@ -3,54 +3,63 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/blang/rpack/pkg/rpack"
 	"github.com/blang/rpack/pkg/rpack/getsource"
 )
 
-// publishCmd represents the publish command.
 var publishCmd = &cobra.Command{
-	Use:   "publish --def <dir> --target <oci-url>",
-	Short: "Publish an rpack definition to an OCI registry",
-	Long: `Publish packages an rpack definition directory and pushes it as an OCI artifact.
+	Use:   "publish --def <dir> --type <oci|archive> --target <target>",
+	Short: "Publish an rpack definition",
+	Long: `Publish packages an rpack definition directory and pushes it to a target.
 
-The definition directory must contain at least rpack.yaml and script.lua.
-The target must be an OCI registry URL: oci://registry.example.com/repo/path?tag=v1
+Supported types:
+  oci     - Push as OCI artifact to a container registry
+  archive - Create a tar.xz archive on disk
 
-Authentication is read from the OCI_USERNAME and OCI_PASSWORD environment variables.`,
+OCI example:
+  rpack publish -d ./myrpack -T oci -t oci://docker.io/user/pack?tag=v1
+
+Archive example:
+  rpack publish -d ./myrpack -T archive -t ./dist/mypack.tar.xz
+
+Authentication for OCI is resolved automatically from Podman/Docker config,
+credential helpers, or OCI_USERNAME/OCI_PASSWORD environment variables.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		defDir, err := cmd.Flags().GetString("def")
-		if err != nil {
-			return err
-		}
-		if defDir == "" {
+		defDir, _ := cmd.Flags().GetString("def")
+		pubType, _ := cmd.Flags().GetString("type")
+		target, _ := cmd.Flags().GetString("target")
+
+		if defDir == "" || pubType == "" || target == "" {
 			return cmd.Usage()
 		}
 
-		target, err := cmd.Flags().GetString("target")
-		if err != nil {
-			return err
-		}
-		if target == "" {
-			return cmd.Usage()
+		// Full definition validation (CUE schema, script.lua, schema.cue)
+		if _, err := rpack.ValidateRPackDef(defDir); err != nil {
+			return fmt.Errorf("definition validation failed: %w", err)
 		}
 
-		return getsource.PublishRPack(
-			context.Background(),
-			defDir,
-			func(registry, repo string) (getsource.OCIPublisher, error) {
-				return getsource.NewORASStore(registry, repo)
-			},
-			target,
-		)
+		switch pubType {
+		case "oci":
+			return getsource.PublishRPack(context.Background(), defDir,
+				func(registry, repo string) (getsource.OCIPublisher, error) {
+					return getsource.NewORASStore(registry, repo)
+				}, target)
+		case "archive":
+			return getsource.PublishArchive(defDir, target)
+		default:
+			return fmt.Errorf("unknown publish type %q, valid types: oci, archive", pubType)
+		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(publishCmd)
-
-	publishCmd.PersistentFlags().StringP("def", "d", "", "Path to the rpack definition directory")
-	publishCmd.PersistentFlags().StringP("target", "t", "", "OCI target URL (oci://registry/repo?tag=v1)")
+	publishCmd.Flags().StringP("def", "d", "", "Path to the rpack definition directory")
+	publishCmd.Flags().StringP("type", "T", "", "Publish type: oci or archive")
+	publishCmd.Flags().StringP("target", "t", "", "Target URL (oci://) or path (.tar.xz)")
 }

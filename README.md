@@ -230,7 +230,10 @@ An rpack bundle is a directory containing:
 | `schema.cue` | No | CUE schema to validate user `values`. |
 | `files/` | No | Static files accessible via `rpack:` prefix. |
 
-Distribute via git, https, or s3. See [examples/](./examples) for complete examples.
+Validate the bundle with `rpack validate --def ./your-rpack` before publishing.
+Distribute via git, https, or s3. Publish to an OCI registry with `rpack publish -T oci`.
+
+See [examples/](./examples) for complete examples.
 
 ## CLI reference
 
@@ -253,6 +256,33 @@ Verify lockfile integrity — checks that all managed files exist and haven't be
 |------|-------|-------------|
 | `--working-dir` | `-w` | Override working directory |
 | `--debug` | | Enable verbose logging |
+
+### `rpack validate --def <dir>`
+
+Validate an rpack definition directory. Checks that rpack.yaml is schema-valid,
+script.lua exists, and schema.cue (if present) is syntactically correct.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--def` | `-d` | Path to rpack definition directory (required) |
+| `--debug` | | Enable verbose logging |
+
+### `rpack publish --def <dir> --type <type> --target <target>`
+
+Publish an rpack definition to a registry or create a local archive.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--def` | `-d` | Path to rpack definition directory (required) |
+| `--type` | `-T` | Publish type: `oci` or `archive` (required) |
+| `--target` | `-t` | OCI URL (`oci://`) or archive path (`.tar.xz`) (required) |
+| `--debug` | | Enable verbose logging |
+
+**OCI:** `rpack publish -d ./myrpack -T oci -t oci://docker.io/user/pack?tag=v1`
+**Archive:** `rpack publish -d ./myrpack -T archive -t ./dist/pack.tar.xz`
+
+OCI credentials are resolved automatically from Podman login, Docker login,
+credential helpers, or the `OCI_USERNAME`/`OCI_PASSWORD` environment variables.
 
 ## State
 

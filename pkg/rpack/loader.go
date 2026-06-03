@@ -224,47 +224,64 @@ func (i *RPackDefInstance) ValidateConfig(c *RPackConfig) error {
 	return nil
 }
 
+// ValidateRPackDef validates an rpack definition directory.
+// It checks:
+// - rpack.yaml exists and conforms to the definition schema
+// - script.lua exists and is readable
+// - schema.cue (if present) is valid CUE syntax
+// Returns the parsed definition on success.
+func ValidateRPackDef(defDir string) (*RPackDef, error) {
+	defPath := filepath.Join(defDir, RPackDefDefaultFilename)
+	def, err := LoadRPackDef(defPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Could not load rpack definition file %s", defPath)
+	}
+	if err := def.ValidateSchema(); err != nil {
+		return nil, errors.Wrapf(err, "Definition schema validation failed: %s", defPath)
+	}
+	// Check optional schema.cue is parseable
+	schemaFile := filepath.Join(defDir, RPackDefSchemaFilename)
+	if _, statErr := os.Stat(schemaFile); statErr == nil {
+		b, readErr := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
+		if readErr != nil {
+			return nil, errors.Wrapf(readErr, "Failed to open schema file: %s", schemaFile)
+		}
+		if _, cueErr := NewCueValidator(b, RPackDefSchemaName); cueErr != nil {
+			return nil, errors.Wrapf(cueErr, "Could not create validation context from path %s in schema file %s", RPackDefSchemaName, schemaFile)
+		}
+	}
+	// Check script exists
+	scriptPath := filepath.Join(defDir, RPackDefScriptFilename)
+	if _, statErr := os.Stat(scriptPath); statErr != nil {
+		return nil, errors.Wrapf(statErr, "Could not access script file: %s", scriptPath)
+	}
+	return def, nil
+}
+
 // SetupRPackDefInstance loads the RPackDef from the given source path
 // and sets up the RPackDefInstance for validation and execution.
 func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
-	// LoadDefinition
-	defPath := filepath.Join(source, RPackDefDefaultFilename)
-	def, err := LoadRPackDef(defPath)
+	def, err := ValidateRPackDef(source)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not load RPack definition file %s", defPath)
-	}
-
-	// Validate Definition
-	err = def.ValidateSchema()
-	if err != nil {
-		return nil, errors.Wrapf(err, "Definition schema validation failed: %s", defPath)
+		return nil, err
 	}
 
 	var vc SchemaValidator
-	// Load optional value schema file in cuelang
 	schemaFile := filepath.Join(source, RPackDefSchemaFilename)
-	if _, err := os.Stat(schemaFile); err == nil { // File exists
-		// Parse schema and validate values
-
-		b, err := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
-		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to open schema file: %s", schemaFile)
+	if _, statErr := os.Stat(schemaFile); statErr == nil {
+		b, readErr := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
+		if readErr != nil {
+			return nil, errors.Wrapf(readErr, "Failed to open schema file: %s", schemaFile)
 		}
-
-		vc, err = NewCueValidator(b, RPackDefSchemaName)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Could not create validation context from path %s in schema file %s", RPackDefSchemaName, schemaFile)
+		vc, readErr = NewCueValidator(b, RPackDefSchemaName)
+		if readErr != nil {
+			return nil, errors.Wrapf(readErr, "Could not create validation context from path %s in schema file %s", RPackDefSchemaName, schemaFile)
 		}
 	} else {
 		vc = &EmptyValidator{}
 	}
 
-	// Check script
 	scriptPath := filepath.Join(source, RPackDefScriptFilename)
-	if _, err := os.Stat(scriptPath); err != nil {
-		return nil, errors.Wrapf(err, "Could not access script file: %s", scriptPath)
-	}
-
 	return &RPackDefInstance{
 		Source:          source,
 		Def:             def,

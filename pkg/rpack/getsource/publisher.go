@@ -1,20 +1,24 @@
 package getsource
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/ulikunitz/xz"
+
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// PublishRPack publishes an rpack definition directory to an OCI registry.
+// PublishRPack publishes an rpack definition directory.
 //
 // defDir is the local path to the rpack definition directory (containing
 // rpack.yaml, script.lua, schema.cue, and any other files).
@@ -24,9 +28,9 @@ func PublishRPack(ctx context.Context, defDir string,
 	storeFactory func(registry, repo string) (OCIPublisher, error),
 	ociRef string,
 ) error {
-	// Validate the definition directory contains rpack.yaml
-	if _, err := os.Stat(filepath.Join(defDir, "rpack.yaml")); err != nil {
-		return fmt.Errorf("definition directory must contain rpack.yaml: %w", err)
+	// Validate the definition directory contains required files
+	if err := validateDefDir(defDir); err != nil {
+		return fmt.Errorf("definition validation failed: %w", err)
 	}
 
 	// Parse OCI reference
@@ -129,4 +133,97 @@ func zipDirectory(dir string) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// validateDefDir performs basic sanity checks on a definition directory.
+// It verifies that rpack.yaml and script.lua exist and are readable.
+// For full schema validation, use rpack.ValidateRPackDef from the command layer.
+func validateDefDir(defDir string) error {
+	if _, err := os.Stat(filepath.Join(defDir, "rpack.yaml")); err != nil {
+		return fmt.Errorf("rpack.yaml not found: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(defDir, "script.lua")); err != nil {
+		return fmt.Errorf("script.lua not found: %w", err)
+	}
+	return nil
+}
+
+// PublishArchive creates a tar.xz archive of the definition directory.
+// defDir is validated before archiving (uses the same checks as publish and validate).
+// archivePath must end in .tar.xz.
+func PublishArchive(defDir, archivePath string) error {
+	if err := validateDefDir(defDir); err != nil {
+		return fmt.Errorf("definition validation failed: %w", err)
+	}
+	if !strings.HasSuffix(archivePath, ".tar.xz") {
+		return fmt.Errorf("archive target must end in .tar.xz: %s", archivePath)
+	}
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+	return createTarXZ(defDir, archivePath)
+}
+
+// createTarXZ creates a tar.xz archive of the source directory at destPath.
+//
+//nolint:gocognit,gocyclo // file system walk + writer chain is inherently detailed
+func createTarXZ(srcDir, destPath string) error {
+	f, err := os.Create(destPath) //nolint:gosec // destPath is user-specified output path
+	if err != nil {
+		return fmt.Errorf("creating archive file: %w", err)
+	}
+
+	xzWriter, err := xz.NewWriter(f)
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("creating xz writer: %w", err)
+	}
+
+	tw := tar.NewWriter(xzWriter)
+
+	walkErr := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, relErr := filepath.Rel(srcDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return statErr
+		}
+		header, headerErr := tar.FileInfoHeader(info, "")
+		if headerErr != nil {
+			return headerErr
+		}
+		header.Name = relPath
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		src, openErr := os.Open(path) //nolint:gosec // path from WalkDir
+		if openErr != nil {
+			return openErr
+		}
+		defer func() { _ = src.Close() }()
+		if _, copyErr := io.Copy(tw, src); copyErr != nil {
+			return copyErr
+		}
+		return nil
+	})
+
+	// Close in order: tar → xz → file. Preserve first error (walkErr takes precedence).
+	if closeErr := tw.Close(); closeErr != nil && walkErr == nil {
+		walkErr = closeErr
+	}
+	if closeErr := xzWriter.Close(); closeErr != nil && walkErr == nil {
+		walkErr = closeErr
+	}
+	if closeErr := f.Close(); closeErr != nil && walkErr == nil {
+		walkErr = closeErr
+	}
+	return walkErr
 }

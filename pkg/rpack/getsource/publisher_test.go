@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	ociDigest "github.com/opencontainers/go-digest"
@@ -236,4 +237,72 @@ func writeFile(t *testing.T, path, content string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeSampleDef(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "rpack.yaml"), "\"@schema_version\": \"v1\"\nname: \"test\"\n")
+	writeFile(t, filepath.Join(dir, "script.lua"), "-- test script\n")
+	return dir
+}
+
+func TestPublishArchive(t *testing.T) {
+	t.Run("valid definition", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		dest := filepath.Join(t.TempDir(), "out.tar.xz")
+		err := PublishArchive(defDir, dest)
+		if err != nil {
+			t.Fatalf("PublishArchive failed: %v", err)
+		}
+		// Verify file exists and has content
+		info, err := os.Stat(dest)
+		if err != nil {
+			t.Fatalf("archive not found: %v", err)
+		}
+		if info.Size() == 0 {
+			t.Error("archive is empty")
+		}
+	})
+
+	t.Run("invalid suffix", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		err := PublishArchive(defDir, filepath.Join(t.TempDir(), "out.zip"))
+		if err == nil {
+			t.Error("expected error for non-.tar.xz suffix")
+		}
+	})
+
+	t.Run("invalid definition", func(t *testing.T) {
+		dir := t.TempDir()
+		// Missing script.lua — only rpack.yaml
+		if err := os.WriteFile(filepath.Join(dir, "rpack.yaml"), []byte("\"@schema_version\": \"v1\"\nname: \"test\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := PublishArchive(dir, filepath.Join(t.TempDir(), "out.tar.xz"))
+		if err == nil {
+			t.Error("expected error for invalid definition")
+		}
+	})
+}
+
+func TestPublishRPack_ValidatesDef(t *testing.T) {
+	t.Run("rejects invalid definition", func(t *testing.T) {
+		dir := t.TempDir()
+		// Write only rpack.yaml (missing script.lua)
+		if err := os.WriteFile(filepath.Join(dir, "rpack.yaml"), []byte("\"@schema_version\": \"v1\"\nname: \"test\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		store := &inMemoryPublisherStore{orasMemory.New()}
+		err := PublishRPack(context.Background(), dir,
+			func(_, _ string) (OCIPublisher, error) { return store, nil },
+			"oci://example.com/test?tag=v1",
+		)
+		if err == nil {
+			t.Error("expected validation error, got nil")
+		}
+		if !strings.Contains(err.Error(), "validation") && !strings.Contains(err.Error(), "script") {
+			t.Errorf("expected validation/script error, got: %v", err)
+		}
+	})
 }

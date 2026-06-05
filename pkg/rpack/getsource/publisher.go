@@ -113,6 +113,12 @@ func zipDirectory(dir string) ([]byte, error) {
 		if relErr != nil {
 			return relErr
 		}
+		if strings.HasPrefix(relPath, "tests/") || strings.HasPrefix(relPath, "tests"+string(filepath.Separator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		f, createErr := w.Create(relPath)
 		if createErr != nil {
 			return createErr
@@ -188,6 +194,12 @@ func createTarXZ(srcDir, destPath string) error {
 		relPath, relErr := filepath.Rel(srcDir, path)
 		if relErr != nil {
 			return relErr
+		}
+		if relPath == "tests" || strings.HasPrefix(relPath, "tests/") || strings.HasPrefix(relPath, "tests"+string(filepath.Separator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		info, statErr := d.Info()
 		if statErr != nil {

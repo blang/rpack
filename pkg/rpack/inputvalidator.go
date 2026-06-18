@@ -1,6 +1,6 @@
 package rpack
 
-import "github.com/pkg/errors"
+import "fmt"
 
 // ValidateRPackInputs validates the inputs for an rpack configuration.
 // Accepts a
@@ -13,7 +13,7 @@ func ValidateRPackInputs(resolvedInputs []*RPackResolvedInput, defInputs []*RPac
 		visitedNames := make(map[string]struct{})
 		for _, in := range resolvedInputs {
 			if _, ok := visitedNames[in.Name]; ok {
-				return errors.Errorf("Resolved input %s already exists", in.Name)
+				return fmt.Errorf("resolved input %s already exists", in.Name)
 			}
 			visitedNames[in.Name] = struct{}{}
 		}
@@ -24,7 +24,7 @@ func ValidateRPackInputs(resolvedInputs []*RPackResolvedInput, defInputs []*RPac
 		visitedNames := make(map[string]struct{})
 		for _, in := range defInputs {
 			if _, ok := visitedNames[in.Name]; ok {
-				return errors.Errorf("RPackDef input %s already exists", in.Name)
+				return fmt.Errorf("rpackdef input %s already exists", in.Name)
 			}
 			visitedNames[in.Name] = struct{}{}
 		}
@@ -40,15 +40,15 @@ func ValidateRPackInputs(resolvedInputs []*RPackResolvedInput, defInputs []*RPac
 			}
 		}
 		if matchDefInput == nil {
-			return errors.Errorf("No definition found for user input %s", in.Name)
+			return fmt.Errorf("no definition found for user input %s: %w", in.Name, ErrInputValidation)
 		}
 		// TODO: Refactor for proper type check
 		// Maybe we can use a type already existing in stdlib
 		if matchDefInput.Type == RPackDefInputTypeFile && in.Type != RPackInputTypeFile {
-			return errors.Errorf("Definition for user input %s requires type file, but found directory", in.Name)
+			return fmt.Errorf("definition for user input %s requires type file, but found directory: %w", in.Name, ErrInputValidation)
 		}
 		if matchDefInput.Type == RPackDefInputTypeDirectory && in.Type != RPackInputTypeDirectory {
-			return errors.Errorf("Definition for user input %s requires type directory, but found file", in.Name)
+			return fmt.Errorf("definition for user input %s requires type directory, but found file: %w", in.Name, ErrInputValidation)
 		}
 	}
 

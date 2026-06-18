@@ -2,9 +2,7 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -104,11 +102,11 @@ With a local definition directory (--def mode):
 				return fmt.Errorf("invalid --set-input flag: %w", err)
 			}
 
-			return e.ExecRPackDirect(context.TODO(), defDir, values, inputs)
+			return e.ExecRPackDirect(cmd.Context(), defDir, values, inputs)
 		}
 
 		// Normal mode (config file)
-		if err := e.ExecRPack(context.TODO(), args[0]); err != nil {
+		if err := e.ExecRPack(cmd.Context(), args[0]); err != nil {
 			return err
 		}
 		return nil
@@ -118,13 +116,16 @@ With a local definition directory (--def mode):
 func init() {
 	rootCmd.AddCommand(runCmd)
 
+	// Run-specific flags (new --def mode)
 	runCmd.Flags().StringP("def", "", "", "Use local definition directory (mutually exclusive with config file)")
 	runCmd.Flags().StringSliceP("set", "", nil, "Set a config value (key=value, repeatable)")
 	runCmd.Flags().StringSliceP("set-input", "", nil, "Map an input name to a local file (name=path, repeatable)")
 	runCmd.Flags().StringP("output-dir", "", "", "Write output files to this directory")
-	runCmd.Flags().StringP("working-dir", "w", "", "Override working dir, defaults to location of rpack file")
-	runCmd.Flags().BoolP("force", "f", false, "Force execution: Overwrite files, ignore warnings")
-	runCmd.Flags().BoolP("dry-run", "", false, "Dry run execution")
+
+	// General execution flags (persistent for future subcommand compatibility)
+	runCmd.PersistentFlags().StringP("working-dir", "w", "", "Override working dir, defaults to location of rpack file")
+	runCmd.PersistentFlags().BoolP("force", "f", false, "Force execution: Overwrite files, ignore warnings")
+	runCmd.PersistentFlags().BoolP("dry-run", "", false, "Dry run execution")
 }
 
 // parseSetFlags parses --set key=value flags into a map[string]any.
@@ -162,10 +163,7 @@ func parseSetInputFlags(raw []string) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid format %q, expected name=path", rawFlag)
 		}
 
-		// Verify the file/dir exists
-		if _, err := os.Stat(path); err != nil {
-			return nil, fmt.Errorf("input path %q does not exist: %w", path, err)
-		}
+		// Path validation is deferred to the executor layer
 		result[name] = path
 	}
 	return result, nil

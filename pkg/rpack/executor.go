@@ -3,6 +3,7 @@ package rpack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,10 +11,19 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/samber/lo"
 
 	"github.com/blang/rpack/pkg/rpack/util"
+)
+
+// Sentinel errors for execution phases.
+// These are used by classifyError to categorize failures.
+var (
+	ErrSchemaValidation = errors.New("schema validation failed")
+	ErrInputValidation  = errors.New("input validation failed")
+	ErrLuaExecution     = errors.New("lua execution failed")
+	ErrPurityCheck      = errors.New("purity check failed")
 )
 
 // Executor runs rpack operations.
@@ -39,29 +49,25 @@ type execResult struct {
 	InputsUsed   []string
 }
 
-// classifyError determines the execution phase from an error message.
-// Uses prefix matching for v1; sentinel errors can replace this later.
+// classifyError determines the execution phase from an error.
+// Uses sentinel errors for reliable classification.
 func classifyError(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "Validating") && strings.Contains(msg, "schema") {
+	if errors.Is(err, ErrSchemaValidation) {
 		return "schema_validation"
 	}
-	if strings.Contains(msg, "Validation of config") {
-		return "schema_validation"
-	}
-	if strings.Contains(msg, "Validation of inputs") {
+	if errors.Is(err, ErrInputValidation) {
 		return "input_validation"
 	}
-	if strings.Contains(msg, "No definition found for user input") {
-		return "input_validation"
-	}
-	if strings.Contains(msg, "Pure Fileaccess check") || strings.Contains(msg, "File access check") {
+	if errors.Is(err, ErrPurityCheck) {
 		return "purity_check"
 	}
-	return "lua_execution"
+	if errors.Is(err, ErrLuaExecution) {
+		return "lua_execution"
+	}
+	return "unknown"
 }
 
 // execCore runs the shared validation→execution→checks pipeline.
@@ -80,10 +86,13 @@ func (e *Executor) execCore(ctx context.Context,
 ) (*RPackFS, *execResult, error) {
 	definst, err := SetupRPackDefInstance(defDir)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "Could not setup RPackDef")
+		return nil, nil, pkgerrors.Wrapf(err, "Could not setup RPackDef")
 	}
 
 	// Validate config values against schema.cue if present.
+	// Note: For direct execution (--def mode), we construct a synthetic config
+	// where Inputs maps name→name. This satisfies the schema validation requirement
+	// that all inputs be declared, while the actual input paths are in resolvedInputs.
 	config := &RPackConfig{
 		Config: &RPackConfigConfig{
 			Values: configValues,
@@ -91,17 +100,17 @@ func (e *Executor) execCore(ctx context.Context,
 		},
 	}
 	for _, name := range inputNames {
-		config.Config.Inputs[name] = name
+		config.Config.Inputs[name] = name // Synthetic: actual paths are in resolvedInputs
 	}
 	err = definst.ValidateConfig(config)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "Failed to validate config values against definition schema")
+		return nil, nil, fmt.Errorf("failed to validate config values against definition schema: %w: %w", ErrSchemaValidation, err)
 	}
 
 	// Validate inputs
 	err = ValidateRPackInputs(resolvedInputs, definst.Def.Inputs)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "Validation of inputs failed")
+		return nil, nil, fmt.Errorf("validation of inputs failed: %w: %w", ErrInputValidation, err)
 	}
 
 	// Setup filesystem for file access.
@@ -115,18 +124,18 @@ func (e *Executor) execCore(ctx context.Context,
 	// Read script file to string
 	scriptBytes, err := os.ReadFile(definst.ScriptPath) //nolint:gosec // path comes from rpack definition
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "Failed to open script file: %s", definst.ScriptPath)
+		return nil, nil, pkgerrors.Wrapf(err, "Failed to open script file: %s", definst.ScriptPath)
 	}
 	// Execute lua in context and capture changed files
 	err = ExecuteLuaWithData(ctx, string(scriptBytes), fs, externalData)
 	if err != nil {
-		return fs, nil, errors.Wrap(err, "Failed to execute script")
+		return fs, nil, fmt.Errorf("failed to execute script: %w: %w", ErrLuaExecution, err)
 	}
-	slog.Info("Script execution successful")
+	slog.Debug("Script execution successful")
 
 	err = fs.Check()
 	if err != nil {
-		return fs, nil, errors.Wrap(err, "File access check failed")
+		return fs, nil, fmt.Errorf("file access check failed: %w: %w", ErrPurityCheck, err)
 	}
 
 	// Drain recorder into result
@@ -211,7 +220,7 @@ func printDryRunOutput(runDir string) error {
 		return nil
 	})
 	if err != nil {
-		return errors.Wrap(err, "Failed to walk run directory")
+		return pkgerrors.Wrap(err, "Failed to walk run directory")
 	}
 
 	sort.Strings(files)
@@ -220,7 +229,7 @@ func printDryRunOutput(runDir string) error {
 		absPath := filepath.Join(runDir, relPath)
 		content, rdErr := os.ReadFile(absPath) //nolint:gosec // path constructed from known run directory
 		if rdErr != nil {
-			return errors.Wrapf(rdErr, "Failed to read file: %s", relPath)
+			return pkgerrors.Wrapf(rdErr, "Failed to read file: %s", relPath)
 		}
 		fmt.Printf("=== ./%s ===\n", relPath)
 		_, _ = os.Stdout.Write(content)
@@ -262,11 +271,11 @@ func writeMetaJSON(outputDir string, result *execResult, execErr error) error {
 
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return errors.Wrap(err, "Failed to marshal meta.json")
+		return pkgerrors.Wrap(err, "Failed to marshal meta.json")
 	}
 	metaPath := filepath.Join(outputDir, "meta.json")
 	if writeErr := os.WriteFile(metaPath, b, 0o644); writeErr != nil { //nolint:gosec // standard permissions for meta.json
-		return errors.Wrap(writeErr, "Failed to write meta.json")
+		return pkgerrors.Wrap(writeErr, "Failed to write meta.json")
 	}
 	return nil
 }
@@ -289,13 +298,13 @@ func copyDir(src, dst string) error {
 
 		content, rdErr := os.ReadFile(path) //nolint:gosec // path from Walk, trusted source
 		if rdErr != nil {
-			return errors.Wrapf(rdErr, "Failed to read: %s", path)
+			return pkgerrors.Wrapf(rdErr, "Failed to read: %s", path)
 		}
 		if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkErr != nil { //nolint:gosec // standard permissions
-			return errors.Wrapf(mkErr, "Failed to create dir: %s", filepath.Dir(targetPath))
+			return pkgerrors.Wrapf(mkErr, "Failed to create dir: %s", filepath.Dir(targetPath))
 		}
 		if wrErr := os.WriteFile(targetPath, content, 0o644); wrErr != nil { //nolint:gosec // standard permissions
-			return errors.Wrapf(wrErr, "Failed to write: %s", targetPath)
+			return pkgerrors.Wrapf(wrErr, "Failed to write: %s", targetPath)
 		}
 		return nil
 	})
@@ -308,7 +317,7 @@ func copyDir(src, dst string) error {
 func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	ci, err := LoadRPackConfig(name)
 	if err != nil {
-		return errors.Wrapf(err, "Could not load rpack config: %s", name)
+		return pkgerrors.Wrapf(err, "Could not load rpack config: %s", name)
 	}
 
 	execPath := ci.ConfigPath
@@ -317,9 +326,8 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	}
 	pi, loadErr := LoadRPack(ci, execPath)
 	if loadErr != nil {
-		return errors.Wrapf(loadErr, "Could not load rpack: %s", name)
+		return pkgerrors.Wrapf(loadErr, "Could not load rpack: %s", name)
 	}
-	slog.Info("PI debug", "rpack", pi)
 
 	values := pi.ConfigInstance.Config.Config.Values
 	inputNames := lo.Keys(pi.ConfigInstance.Config.Config.Inputs)
@@ -329,8 +337,11 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 
 	if execErr != nil {
 		if e.OutputDir != "" {
-			_ = os.MkdirAll(e.OutputDir, 0o755) //nolint:gosec // standard permissions
-			_ = writeMetaJSON(e.OutputDir, result, execErr)
+			if mkErr := os.MkdirAll(e.OutputDir, 0o755); mkErr != nil { //nolint:gosec // standard permissions
+				slog.Warn("Failed to create output directory for meta.json", "dir", e.OutputDir, "error", mkErr)
+			} else if metaErr := writeMetaJSON(e.OutputDir, result, execErr); metaErr != nil {
+				slog.Warn("Failed to write meta.json", "dir", e.OutputDir, "error", metaErr)
+			}
 		}
 		return execErr
 	}
@@ -338,7 +349,7 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	if e.DryRun {
 		if e.OutputDir != "" {
 			if cpErr := copyDir(pi.RunPath, e.OutputDir); cpErr != nil {
-				return errors.Wrap(cpErr, "Failed to copy files to output directory")
+				return pkgerrors.Wrap(cpErr, "Failed to copy files to output directory")
 			}
 			if metaErr := writeMetaJSON(e.OutputDir, result, nil); metaErr != nil {
 				return metaErr
@@ -351,14 +362,14 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 		if !e.Force {
 			entries, rdErr := os.ReadDir(e.OutputDir)
 			if rdErr == nil && len(entries) > 0 {
-				return errors.Errorf("output directory %s is not empty, use --force to overwrite", e.OutputDir)
+				return pkgerrors.Errorf("output directory %s is not empty, use --force to overwrite", e.OutputDir)
 			}
 		}
 		if mkErr := os.MkdirAll(e.OutputDir, 0o755); mkErr != nil { //nolint:gosec // standard permissions
-			return errors.Wrapf(mkErr, "Could not create output directory: %s", e.OutputDir)
+			return pkgerrors.Wrapf(mkErr, "Could not create output directory: %s", e.OutputDir)
 		}
 		if cpErr := copyDir(pi.RunPath, e.OutputDir); cpErr != nil {
-			return errors.Wrap(cpErr, "Failed to copy files to output directory")
+			return pkgerrors.Wrap(cpErr, "Failed to copy files to output directory")
 		}
 		return writeMetaJSON(e.OutputDir, result, nil)
 	}
@@ -383,7 +394,7 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 		var chsum string
 		chsum, err = util.Sha256File(absPath)
 		if err != nil {
-			return errors.Wrapf(err, "Failed to calculate checksum of: %s", absPath)
+			return pkgerrors.Wrapf(err, "Failed to calculate checksum of: %s", absPath)
 		}
 		checksums[absPath] = chsum
 
@@ -394,13 +405,13 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	oldLock := ci.LockFile
 	oldLockIntegrity, err := oldLock.CheckIntegrity(execPath)
 	if err != nil {
-		return errors.Wrap(err, "Failed to check lockfile integrity")
+		return pkgerrors.Wrap(err, "Failed to check lockfile integrity")
 	}
 	if len(oldLockIntegrity.Modified) > 0 {
 		modFilesStr := strings.Join(oldLockIntegrity.Modified, ",")
 		slog.Warn("Some files in lockfile were modified outside of rpack", "files", modFilesStr)
 		if !e.Force {
-			return errors.Errorf("Some locked files were modified outside of rpack, use force flag to ignore: %s", modFilesStr)
+			return pkgerrors.Errorf("Some locked files were modified outside of rpack, use force flag to ignore: %s", modFilesStr)
 		}
 	}
 
@@ -428,21 +439,21 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 		if exists {
 			slog.Warn("File is not managed by rdef but will be overwritten", "file", added)
 			if !e.Force {
-				return errors.Errorf("Existing file would need to be overwritten, use force flag to ignore: %s", added)
+				return pkgerrors.Errorf("Existing file would need to be overwritten, use force flag to ignore: %s", added)
 			}
 		} else if err != nil {
-			return errors.Wrapf(err, "Failed to check file exists: %s", added)
+			return pkgerrors.Wrapf(err, "Failed to check file exists: %s", added)
 		}
 	}
 
 	for _, wFile := range filesToMove {
 		targetFile := filepath.Clean(filepath.Join(execPath, wFile.Path))
 		if err = os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil { //nolint:gosec // standard permissions
-			return errors.Wrapf(err, "Failed to create dirs for: %s", targetFile)
+			return pkgerrors.Wrapf(err, "Failed to create dirs for: %s", targetFile)
 		}
 		err = os.Rename(wFile.AbsPath, targetFile)
 		if err != nil {
-			return errors.Wrapf(err, "Failed to move file %s to exec path %s", wFile.Path, execPath)
+			return pkgerrors.Wrapf(err, "Failed to move file %s to exec path %s", wFile.Path, execPath)
 		}
 	}
 
@@ -451,12 +462,12 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 		var exists bool
 		exists, err = util.FileExists(p)
 		if err != nil {
-			return errors.Wrapf(err, "Could not check deprecated file: %s", removedFile)
+			return pkgerrors.Wrapf(err, "Could not check deprecated file: %s", removedFile)
 		}
 		if exists {
 			err = os.Remove(p)
 			if err != nil {
-				return errors.Wrapf(err, "Could not remove deprecated file: %s", removedFile)
+				return pkgerrors.Wrapf(err, "Could not remove deprecated file: %s", removedFile)
 			}
 		} else {
 			slog.Warn("File managed by rpack but marked for removal, does no longer exist, ignoring", "file", removedFile)
@@ -465,7 +476,7 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 
 	err = newLockfile.WriteFile(ci.LockFilePath)
 	if err != nil {
-		return errors.Wrapf(err, "Could not write lockfile to %s", ci.LockFilePath)
+		return pkgerrors.Wrapf(err, "Could not write lockfile to %s", ci.LockFilePath)
 	}
 
 	return nil
@@ -478,18 +489,18 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values map[string]any, inputs map[string]string) error {
 	absDefDir, err := filepath.Abs(defDir)
 	if err != nil {
-		return errors.Wrapf(err, "Could not resolve definition directory: %s", defDir)
+		return pkgerrors.Wrapf(err, "Could not resolve definition directory: %s", defDir)
 	}
 
 	runDir, err := os.MkdirTemp("", "rpack-run-*")
 	if err != nil {
-		return errors.Wrap(err, "Could not create run directory")
+		return pkgerrors.Wrap(err, "Could not create run directory")
 	}
 	defer func() { _ = os.RemoveAll(runDir) }()
 
 	tempDir, err := os.MkdirTemp("", "rpack-tmp-*")
 	if err != nil {
-		return errors.Wrap(err, "Could not create temp directory")
+		return pkgerrors.Wrap(err, "Could not create temp directory")
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
@@ -501,13 +512,13 @@ func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values ma
 		if !filepath.IsAbs(cleanPath) {
 			cwd, wdErr := os.Getwd()
 			if wdErr != nil {
-				return errors.Wrap(wdErr, "Could not get working directory")
+				return pkgerrors.Wrap(wdErr, "Could not get working directory")
 			}
 			absPath = filepath.Join(cwd, cleanPath)
 		}
 		isDir, statErr := util.CheckFileOrDirExists(absPath)
 		if statErr != nil {
-			return errors.Wrapf(statErr, "User path %s=%s does not exist", name, userPath)
+			return pkgerrors.Wrapf(statErr, "User path %s=%s does not exist", name, userPath)
 		}
 		fileType := RPackInputTypeFile
 		if isDir {
@@ -530,7 +541,7 @@ func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values ma
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				execErr = errors.Errorf("Lua execution panicked: %v", r)
+				execErr = pkgerrors.Errorf("Lua execution panicked: %v", r)
 			}
 		}()
 		_, result, execErr = e.execCore(ctx, absDefDir, runDir, tempDir, resolvedInputs, values, inputNames, configValues)
@@ -538,8 +549,11 @@ func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values ma
 
 	if execErr != nil {
 		if e.OutputDir != "" {
-			_ = os.MkdirAll(e.OutputDir, 0o755) //nolint:gosec // standard permissions for output directory
-			_ = writeMetaJSON(e.OutputDir, result, execErr)
+			if mkErr := os.MkdirAll(e.OutputDir, 0o755); mkErr != nil { //nolint:gosec // standard permissions
+				slog.Warn("Failed to create output directory for meta.json", "dir", e.OutputDir, "error", mkErr)
+			} else if metaErr := writeMetaJSON(e.OutputDir, result, execErr); metaErr != nil {
+				slog.Warn("Failed to write meta.json", "dir", e.OutputDir, "error", metaErr)
+			}
 		}
 		return execErr
 	}
@@ -552,21 +566,21 @@ func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values ma
 		if !e.Force {
 			entries, rdErr := os.ReadDir(e.OutputDir)
 			if rdErr == nil && len(entries) > 0 {
-				return errors.Errorf("output directory %s is not empty, use --force to overwrite", e.OutputDir)
+				return pkgerrors.Errorf("output directory %s is not empty, use --force to overwrite", e.OutputDir)
 			}
 		}
 		if mkErr := os.MkdirAll(e.OutputDir, 0o755); mkErr != nil { //nolint:gosec // standard permissions for output directory
-			return errors.Wrapf(mkErr, "Could not create output directory: %s", e.OutputDir)
+			return pkgerrors.Wrapf(mkErr, "Could not create output directory: %s", e.OutputDir)
 		}
 		if cpErr := copyDir(runDir, e.OutputDir); cpErr != nil {
-			return errors.Wrap(cpErr, "Failed to copy files to output directory")
+			return pkgerrors.Wrap(cpErr, "Failed to copy files to output directory")
 		}
 		return writeMetaJSON(e.OutputDir, result, nil)
 	}
 
 	// No --output-dir and no --dry-run: write files to CWD.
 	if cpErr := copyDir(runDir, "."); cpErr != nil {
-		return errors.Wrap(cpErr, "Failed to copy files to working directory")
+		return pkgerrors.Wrap(cpErr, "Failed to copy files to working directory")
 	}
 
 	return nil

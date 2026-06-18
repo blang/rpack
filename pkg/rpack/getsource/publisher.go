@@ -106,17 +106,18 @@ func zipDirectory(dir string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
-		}
 		relPath, relErr := filepath.Rel(dir, path)
 		if relErr != nil {
 			return relErr
 		}
+		// Skip tests/ directory before processing other directories
 		if strings.HasPrefix(relPath, "tests/") || strings.HasPrefix(relPath, "tests"+string(filepath.Separator)) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		f, createErr := w.Create(relPath)
@@ -220,8 +221,9 @@ func createTarXZ(srcDir, destPath string) error {
 		if openErr != nil {
 			return openErr
 		}
-		defer func() { _ = src.Close() }()
-		if _, copyErr := io.Copy(tw, src); copyErr != nil {
+		_, copyErr := io.Copy(tw, src)
+		_ = src.Close() // close immediately after copy, don't defer in WalkDir callback
+		if copyErr != nil {
 			return copyErr
 		}
 		return nil

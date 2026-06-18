@@ -9,7 +9,6 @@ import (
 	"log/slog"
 
 	"github.com/oleiade/lane/v2"
-	pkgerrors "github.com/pkg/errors"
 )
 
 // Filesystem resolver names.
@@ -144,7 +143,7 @@ func (fs *InMemoryFS) Write(name string, b []byte) error {
 	}
 	entry := fs.Tree[name]
 	if entry.IsDir {
-		return pkgerrors.Errorf("%s is directory", name)
+		return fmt.Errorf("%s is directory", name)
 	}
 	entry.Content = make([]byte, len(b))
 	copy(entry.Content, b)
@@ -152,11 +151,11 @@ func (fs *InMemoryFS) Write(name string, b []byte) error {
 }
 func (fs *InMemoryFS) Read(name string) ([]byte, error) {
 	if _, ok := fs.Tree[name]; !ok {
-		return nil, pkgerrors.Wrapf(os.ErrNotExist, "File %s does not exist", name)
+		return nil, fmt.Errorf("file %s does not exist: %w", name, os.ErrNotExist)
 	}
 	entry := fs.Tree[name]
 	if entry.IsDir {
-		return nil, pkgerrors.Errorf("%s is directory", name)
+		return nil, fmt.Errorf("%s is directory", name)
 	}
 	b := make([]byte, len(entry.Content))
 	copy(b, entry.Content)
@@ -174,12 +173,12 @@ func (fs *InMemoryFS) Stat(name string) (exists, dir bool, err error) {
 
 // ReadDir lists files and directories.
 func (fs *InMemoryFS) ReadDir(name string) (_files, _dirs []string, _err error) {
-	return nil, nil, pkgerrors.Errorf("Not yet implemented")
+	return nil, nil, fmt.Errorf("not yet implemented")
 }
 
 // ReadDirAll lists all files and directories recursively.
 func (fs *InMemoryFS) ReadDirAll(name string) (_files, _dirs []string, _err error) {
-	return nil, nil, pkgerrors.Errorf("Not yet implemented")
+	return nil, nil, fmt.Errorf("not yet implemented")
 }
 
 // BaseFS implements the base filesystem model for rpack.
@@ -205,7 +204,7 @@ func (fs *BaseFS) resolve(name string) (FSHandle, error) {
 			return handle, err
 		}
 	}
-	return nil, pkgerrors.Errorf("Could not resolve filename %q", name)
+	return nil, fmt.Errorf("could not resolve filename %q", name)
 }
 
 func (fs *BaseFS) Write(name string, b []byte) error {
@@ -270,10 +269,10 @@ func (fs *BaseFS) ReadDir(name string) (_files, _dirs []string, _err error) {
 		return nil, nil, err
 	}
 	if !exists {
-		return nil, nil, pkgerrors.Errorf("Path does not exist: %s", name)
+		return nil, nil, fmt.Errorf("path does not exist: %s", name)
 	}
 	if !dir {
-		return nil, nil, pkgerrors.Errorf("Path is not a directory: %s", name)
+		return nil, nil, fmt.Errorf("path is not a directory: %s", name)
 	}
 
 	// Call ReadDir
@@ -386,10 +385,10 @@ func (r *FileBackedFSResolver) Resolve(name string) (FSHandle, bool, error) {
 
 	cleanPath := filepath.Clean(suffix)
 	if filepath.IsAbs(cleanPath) {
-		return nil, true, pkgerrors.Errorf("Path %q needs to be relative", name)
+		return nil, true, fmt.Errorf("path %q needs to be relative", name)
 	}
 	if !filepath.IsLocal(cleanPath) {
-		return nil, true, pkgerrors.Errorf("Path %q needs to be local", name)
+		return nil, true, fmt.Errorf("path %q needs to be local", name)
 	}
 	absPath := filepath.Join(r.baseDir, cleanPath)
 	friendlyPath := r.prefix + cleanPath
@@ -428,10 +427,10 @@ func (r *MapFSResolver) Resolve(name string) (FSHandle, bool, error) {
 
 	cleanPath := filepath.Clean(suffix)
 	if filepath.IsAbs(cleanPath) {
-		return nil, true, pkgerrors.Errorf("Path %q needs to be relative", name)
+		return nil, true, fmt.Errorf("path %q needs to be relative", name)
 	}
 	if !filepath.IsLocal(cleanPath) {
-		return nil, true, pkgerrors.Errorf("Path %q needs to be local", name)
+		return nil, true, fmt.Errorf("path %q needs to be local", name)
 	}
 
 	base, nextPath, found := strings.Cut(suffix, "/")
@@ -444,7 +443,7 @@ func (r *MapFSResolver) Resolve(name string) (FSHandle, bool, error) {
 		}
 	}
 	if resolvedInput == nil {
-		return nil, true, pkgerrors.Errorf("Could not find mapped input %s", name)
+		return nil, true, fmt.Errorf("could not find mapped input %s", name)
 	}
 
 	// mapped path already resolved to a absolute path
@@ -454,14 +453,14 @@ func (r *MapFSResolver) Resolve(name string) (FSHandle, bool, error) {
 	cleanFriendlyName := r.prefix + cleanPath
 	if found {
 		if resolvedInput.Type != RPackInputTypeDirectory {
-			return nil, true, pkgerrors.Errorf("Map path %q is not a directory", name)
+			return nil, true, fmt.Errorf("map path %q is not a directory", name)
 		}
 		cleanNextPath := filepath.Clean(nextPath)
 		if filepath.IsAbs(cleanNextPath) {
-			return nil, true, pkgerrors.Errorf("Map path %q needs to be relative", name)
+			return nil, true, fmt.Errorf("map path %q needs to be relative", name)
 		}
 		if !filepath.IsLocal(cleanNextPath) {
-			return nil, true, pkgerrors.Errorf("Map path %q needs to be local", name)
+			return nil, true, fmt.Errorf("map path %q needs to be local", name)
 		}
 		p = filepath.Join(p, cleanNextPath)
 		relPath = filepath.Join(relPath, cleanNextPath)
@@ -562,7 +561,7 @@ var _ = FSAccessHook(&RPackAccessControlFSHook{})
 func (f *RPackAccessControlFSHook) Read(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == TargetResolver {
-		return pkgerrors.Errorf("Not allowed to read %s (no access to read from target directory, use 'rpack:' instead)", h.FriendlyPath())
+		return fmt.Errorf("not allowed to read %s (no access to read from target directory, use 'rpack:' instead)", h.FriendlyPath())
 	}
 	return nil
 }
@@ -570,9 +569,9 @@ func (f *RPackAccessControlFSHook) Write(h FSHandle) error {
 	resolver := h.Resolver()
 	switch resolver {
 	case RPackResolver:
-		return pkgerrors.Errorf("Not allowed to write %s, use `temp` instead", h.FriendlyPath())
+		return fmt.Errorf("not allowed to write %s, use `temp` instead", h.FriendlyPath())
 	case MapResolver:
-		return pkgerrors.Errorf("Not allowed to write %s, use `target` instead", h.FriendlyPath())
+		return fmt.Errorf("not allowed to write %s, use `target` instead", h.FriendlyPath())
 	}
 	return nil
 }
@@ -581,7 +580,7 @@ func (f *RPackAccessControlFSHook) Write(h FSHandle) error {
 func (f *RPackAccessControlFSHook) ReadDir(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == TargetResolver {
-		return pkgerrors.Errorf("Not allowed to readdir %s (no access to read from target directory, use 'rpack:' instead)", h.FriendlyPath())
+		return fmt.Errorf("not allowed to readdir %s (no access to read from target directory, use 'rpack:' instead)", h.FriendlyPath())
 	}
 	return nil
 }
@@ -590,7 +589,7 @@ func (f *RPackAccessControlFSHook) ReadDir(h FSHandle) error {
 func (f *RPackAccessControlFSHook) Stat(h FSHandle) error {
 	resolver := h.Resolver()
 	if resolver == TargetResolver {
-		return pkgerrors.Errorf("Not allowed to stat %s (no access to read from target directory, use 'rpack:' instead)", h.FriendlyPath())
+		return fmt.Errorf("not allowed to stat %s (no access to read from target directory, use 'rpack:' instead)", h.FriendlyPath())
 	}
 	return nil
 }
@@ -621,7 +620,7 @@ func (f *EnsurePure) CheckConflicts() error {
 		for _, wh := range f.WriteHandles {
 			writePath := wh.IndirectTargetPath()
 			if readPath == writePath {
-				return pkgerrors.Errorf("Read of %s and write of same file %s not allowed", rh.FriendlyPath(), wh.FriendlyPath())
+				return fmt.Errorf("read of %s and write of same file %s not allowed", rh.FriendlyPath(), wh.FriendlyPath())
 			}
 		}
 	}
@@ -632,7 +631,7 @@ func (f *EnsurePure) CheckConflicts() error {
 		for _, wh := range f.WriteHandles {
 			writePath := wh.IndirectTargetPath()
 			if statPath == writePath {
-				return pkgerrors.Errorf("Stat on %s and write on same file %s not allowed", sh.FriendlyPath(), wh.FriendlyPath())
+				return fmt.Errorf("stat on %s and write on same file %s not allowed", sh.FriendlyPath(), wh.FriendlyPath())
 			}
 		}
 	}
@@ -643,9 +642,9 @@ func (f *EnsurePure) CheckConflicts() error {
 		for _, wh := range f.WriteHandles {
 			writePath := wh.IndirectTargetPath()
 			if match, err := filepath.Match(filepath.Join(readDirPath, "*"), writePath); err != nil {
-				return pkgerrors.Wrapf(err, "ReadDir on %s error for pure-check against %s", rdh.FriendlyPath(), wh.FriendlyPath())
+				return fmt.Errorf("readDir on %s error for pure-check against %s: %w", rdh.FriendlyPath(), wh.FriendlyPath(), err)
 			} else if match {
-				return pkgerrors.Errorf("ReadDir on %s and write on same directory %s not allowed", rdh.FriendlyPath(), wh.FriendlyPath())
+				return fmt.Errorf("readDir on %s and write on same directory %s not allowed", rdh.FriendlyPath(), wh.FriendlyPath())
 			}
 		}
 	}

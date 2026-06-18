@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pkg/errors"
+	"fmt"
 
 	"github.com/blang/rpack/pkg/rpack/util"
 )
@@ -90,24 +90,24 @@ type FileResolver struct {
 func NewFileResolver(defSourcePath, runPath, tempPath, execPath string, resolvedInputs []*RPackResolvedInput) (*FileResolver, error) {
 	ensureDir := func(path string) error {
 		if dir, err := util.CheckFileOrDirExists(path); err != nil {
-			return errors.Wrap(err, "Failed to use path")
+			return fmt.Errorf("failed to use path: %w", err)
 		} else if !dir {
-			return errors.Errorf("Not a directory")
+			return fmt.Errorf("not a directory")
 		}
 		return nil
 	}
 
 	if err := ensureDir(defSourcePath); err != nil {
-		return nil, errors.Wrapf(err, "Failed to use defSourcePath: %s", defSourcePath)
+		return nil, fmt.Errorf("failed to use defSourcePath: %s: %w", defSourcePath, err)
 	}
 	if err := ensureDir(runPath); err != nil {
-		return nil, errors.Wrapf(err, "Failed to use runPath: %s", runPath)
+		return nil, fmt.Errorf("failed to use runPath: %s: %w", runPath, err)
 	}
 	if err := ensureDir(tempPath); err != nil {
-		return nil, errors.Wrapf(err, "Failed to use tempPath: %s", tempPath)
+		return nil, fmt.Errorf("failed to use tempPath: %s: %w", tempPath, err)
 	}
 	if err := ensureDir(execPath); err != nil {
-		return nil, errors.Wrapf(err, "Failed to use execPath: %s", execPath)
+		return nil, fmt.Errorf("failed to use execPath: %s: %w", execPath, err)
 	}
 
 	return &FileResolver{
@@ -123,7 +123,7 @@ func NewFileResolver(defSourcePath, runPath, tempPath, execPath string, resolved
 func (r *FileResolver) ResolveInput(name string) (*ControlledFile, error) {
 	prefix, suffix, found := strings.Cut(name, ":")
 	if !found {
-		return nil, errors.Errorf("Input path needs to use map:, rpack:, or temp: prefix")
+		return nil, fmt.Errorf("input path needs to use map:, rpack:, or temp: prefix")
 	}
 	switch prefix {
 	case "map":
@@ -137,7 +137,7 @@ func (r *FileResolver) ResolveInput(name string) (*ControlledFile, error) {
 		// Resolve file to the temp directory
 		return r.resolveTempPath(suffix)
 	}
-	return nil, errors.Errorf("Path prefix %q not valid in %q", prefix, name)
+	return nil, fmt.Errorf("path prefix %q not valid in %q", prefix, name)
 }
 
 func (r *FileResolver) resolveMapInput(name string) (*ControlledFile, error) {
@@ -151,7 +151,7 @@ func (r *FileResolver) resolveMapInput(name string) (*ControlledFile, error) {
 		}
 	}
 	if resolvedInput == nil {
-		return nil, errors.Errorf("Could not find mapped input %s", name)
+		return nil, fmt.Errorf("could not find mapped input %s", name)
 	}
 
 	// mapped path already resolved to a absolute path
@@ -159,14 +159,14 @@ func (r *FileResolver) resolveMapInput(name string) (*ControlledFile, error) {
 	relPath := resolvedInput.UserPath
 	if found {
 		if resolvedInput.Type != RPackInputTypeDirectory {
-			return nil, errors.Errorf("Map path %q is not a directory", name)
+			return nil, fmt.Errorf("map path %q is not a directory", name)
 		}
 		cleanSuffix := filepath.Clean(suffix)
 		if filepath.IsAbs(cleanSuffix) {
-			return nil, errors.Errorf("Map path %q needs to be relative", name)
+			return nil, fmt.Errorf("map path %q needs to be relative", name)
 		}
 		if !filepath.IsLocal(cleanSuffix) {
-			return nil, errors.Errorf("Map path %q needs to be local", name)
+			return nil, fmt.Errorf("map path %q needs to be local", name)
 		}
 		p = filepath.Join(p, cleanSuffix)
 		relPath = filepath.Join(relPath, cleanSuffix)
@@ -182,10 +182,10 @@ func (r *FileResolver) resolveMapInput(name string) (*ControlledFile, error) {
 func (r *FileResolver) resolveRPackPath(name string) (*ControlledFile, error) {
 	cleanPath := filepath.Clean(name)
 	if filepath.IsAbs(cleanPath) {
-		return nil, errors.Errorf("RPack path %q needs to be relative", name)
+		return nil, fmt.Errorf("rPack path %q needs to be relative", name)
 	}
 	if !filepath.IsLocal(cleanPath) {
-		return nil, errors.Errorf("RPack path %q needs to be local", name)
+		return nil, fmt.Errorf("rPack path %q needs to be local", name)
 	}
 
 	return &ControlledFile{
@@ -198,10 +198,10 @@ func (r *FileResolver) resolveRPackPath(name string) (*ControlledFile, error) {
 func (r *FileResolver) resolveTempPath(name string) (*ControlledFile, error) {
 	cleanPath := filepath.Clean(name)
 	if filepath.IsAbs(cleanPath) {
-		return nil, errors.Errorf("Temp path %q needs to be relative", name)
+		return nil, fmt.Errorf("temp path %q needs to be relative", name)
 	}
 	if !filepath.IsLocal(cleanPath) {
-		return nil, errors.Errorf("Temp input %q needs to be local", name)
+		return nil, fmt.Errorf("temp input %q needs to be local", name)
 	}
 	return &ControlledFile{
 		AbsPath:  filepath.Join(r.tempPath, cleanPath),
@@ -218,15 +218,15 @@ func (r *FileResolver) ResolveOutput(name string) (*ControlledFile, error) {
 			// Resolve file to the temp directory
 			return r.resolveTempPath(suffix)
 		}
-		return nil, errors.Errorf("Output path needs to use temp: prefix or no prefix at all")
+		return nil, fmt.Errorf("output path needs to use temp: prefix or no prefix at all")
 	}
 
 	cleanPath := filepath.Clean(prefix)
 	if filepath.IsAbs(cleanPath) {
-		return nil, errors.Errorf("Output path %q needs to be relative", name)
+		return nil, fmt.Errorf("output path %q needs to be relative", name)
 	}
 	if !filepath.IsLocal(cleanPath) {
-		return nil, errors.Errorf("Output path %q needs to be local", name)
+		return nil, fmt.Errorf("output path %q needs to be local", name)
 	}
 	return &ControlledFile{
 		AbsPath:  filepath.Join(r.runPath, cleanPath),

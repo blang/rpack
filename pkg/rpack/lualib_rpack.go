@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"text/template"
 
+	"fmt"
+
 	"github.com/itchyny/gojq"
-	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 	"sigs.k8s.io/yaml"
 )
@@ -115,7 +116,7 @@ func luaFromJSON(L *lua.LState) int {
 	input := L.CheckString(1)
 	var data any
 	if err := json.Unmarshal([]byte(input), &data); err != nil {
-		L.ArgError(1, errors.Wrap(err, "failed to unmarshal JSON").Error())
+		L.ArgError(1, fmt.Errorf("failed to unmarshal JSON: %w", err).Error())
 		return 0
 	}
 	L.Push(goToLValue(L, data))
@@ -128,7 +129,7 @@ func luaToJSON(L *lua.LState) int {
 	goVal := luaTableToGo(val)
 	jsonBytes, err := json.MarshalIndent(goVal, "", "  ")
 	if err != nil {
-		L.ArgError(1, errors.Wrap(err, "failed to marshal JSON").Error())
+		L.ArgError(1, fmt.Errorf("failed to marshal JSON: %w", err).Error())
 		return 0
 	}
 	L.Push(lua.LString(string(jsonBytes)))
@@ -139,7 +140,7 @@ func luaFromYAML(L *lua.LState) int {
 	input := L.CheckString(1)
 	var data any
 	if err := yaml.Unmarshal([]byte(input), &data); err != nil {
-		L.ArgError(1, errors.Wrap(err, "failed to unmarshal YAML").Error())
+		L.ArgError(1, fmt.Errorf("failed to unmarshal YAML: %w", err).Error())
 		return 0
 	}
 	L.Push(goToLValue(L, data))
@@ -151,7 +152,7 @@ func luaToYAML(L *lua.LState) int {
 	goVal := luaTableToGo(val)
 	jsonBytes, err := json.MarshalIndent(goVal, "", "  ")
 	if err != nil {
-		L.ArgError(1, errors.Wrap(err, "failed to marshal YAML").Error())
+		L.ArgError(1, fmt.Errorf("failed to marshal YAML: %w", err).Error())
 		return 0
 	}
 	L.Push(lua.LString(string(jsonBytes)))
@@ -174,12 +175,12 @@ func luaTemplate(L *lua.LState) int {
 	}
 	tmpl, err := tpl.Parse(tplContent)
 	if err != nil {
-		L.ArgError(1, errors.Wrap(err, "failed to parse template").Error())
+		L.ArgError(1, fmt.Errorf("failed to parse template: %w", err).Error())
 		return 0
 	}
 	var buf bytes.Buffer
 	if err = tmpl.Execute(&buf, data); err != nil {
-		L.ArgError(2, errors.Wrap(err, "failed to execute template").Error())
+		L.ArgError(2, fmt.Errorf("failed to execute template: %w", err).Error())
 		return 0
 	}
 	L.Push(lua.LString(buf.String()))
@@ -195,7 +196,7 @@ func luaJQ(L *lua.LState) int {
 
 	query, err := gojq.Parse(queryStr)
 	if err != nil {
-		L.ArgError(1, errors.Wrap(err, "failed to parse query").Error())
+		L.ArgError(1, fmt.Errorf("failed to parse query: %w", err).Error())
 		return 0
 	}
 	iter := query.Run(goVal)
@@ -209,7 +210,7 @@ func luaJQ(L *lua.LState) int {
 			if err, ok := err.(*gojq.HaltError); ok && err.Value() == nil {
 				break
 			}
-			L.ArgError(2, errors.Wrap(err, "error executing query").Error())
+			L.ArgError(2, fmt.Errorf("error executing query: %w", err).Error())
 			return 0
 		}
 		res = append(res, v)

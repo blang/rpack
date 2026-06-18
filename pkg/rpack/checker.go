@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/pkg/errors"
+	"fmt"
 )
 
 // Checker checks certain aspects of an rpack
@@ -19,7 +19,7 @@ type Checker struct {
 func (c *Checker) CheckIntegrity(ctx context.Context, name string) error {
 	ci, err := LoadRPackConfig(name)
 	if err != nil {
-		return errors.Wrapf(err, "Could not load rpack config: %s", name)
+		return fmt.Errorf("could not load rpack config: %s: %w", name, err)
 	}
 
 	execPath := ci.ConfigPath
@@ -28,19 +28,19 @@ func (c *Checker) CheckIntegrity(ctx context.Context, name string) error {
 	}
 	oldLockIntegrity, err := ci.LockFile.CheckIntegrity(execPath)
 	if err != nil {
-		return errors.Wrap(err, "Failed to check lockfile integrity")
+		return fmt.Errorf("failed to check lockfile integrity: %w", err)
 	}
 	// Require force flag if files were modified that should be controlled by lockfile
 	if len(oldLockIntegrity.Modified) > 0 {
 		modFilesStr := strings.Join(oldLockIntegrity.Modified, ",")
 		slog.Warn("Some files in lockfile were modified outside of rpack", "files", modFilesStr)
-		return errors.Errorf("Some locked files were modified outside of rpack, use force flag to ignore: %s", modFilesStr)
+		return fmt.Errorf("some locked files were modified outside of rpack, use force flag to ignore: %s", modFilesStr)
 	}
 
 	// Warn about files that are removed but still in the lockfile
 	if len(oldLockIntegrity.Removed) > 0 {
 		slog.Warn("Some files in lockfile were removed outside of rpack", "files", strings.Join(oldLockIntegrity.Removed, ","))
-		return errors.Errorf("Some files in lockfile were removed: %s", strings.Join(oldLockIntegrity.Removed, ","))
+		return fmt.Errorf("some files in lockfile were removed: %s", strings.Join(oldLockIntegrity.Removed, ","))
 	}
 	return nil
 }

@@ -9,7 +9,6 @@ import (
 
 	"log/slog"
 
-	"github.com/pkg/errors"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -54,7 +53,7 @@ func NewLuaModel(ctx context.Context, fs FS, initialData map[string]any) (*LuaMo
 
 	if err := sandbox(L); err != nil {
 		L.Close()
-		return nil, errors.Wrap(err, "Could not sandbox lua state")
+		return nil, fmt.Errorf("could not sandbox lua state: %w", err)
 	}
 	return lm, nil
 }
@@ -91,7 +90,7 @@ func openLibs(L *lua.LState) error {
 			NRet:    0,
 			Protect: true,
 		}, lua.LString(lib.name)); err != nil {
-			return errors.Wrapf(err, "failed to set up %s", lib.name)
+			return fmt.Errorf("failed to set up %s: %w", lib.name, err)
 		}
 	}
 	return nil
@@ -320,11 +319,11 @@ func lValueToGo(val lua.LValue) any {
 func ExecuteLuaWithData(ctx context.Context, script string, fs FS, data map[string]any) error {
 	lm, err := NewLuaModel(ctx, fs, data)
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize Lua environment")
+		return fmt.Errorf("failed to initialize Lua environment: %w", err)
 	}
 	defer lm.Close()
 	if err = lm.Exec(script); err != nil {
-		return errors.Wrap(err, "failed to execute script")
+		return fmt.Errorf("failed to execute script: %w", err)
 	}
 	return nil
 }

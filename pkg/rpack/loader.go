@@ -2,12 +2,11 @@ package rpack
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"log/slog"
-
-	"github.com/pkg/errors"
 
 	"github.com/blang/rpack/pkg/rpack/getsource"
 	"github.com/blang/rpack/pkg/rpack/util"
@@ -71,10 +70,10 @@ func ResolveRPackInputs(configInputs map[string]string, execPath string) ([]*RPa
 		cleanUserPath := filepath.Clean(userPath)
 		// Check path boundaries
 		if filepath.IsAbs(cleanUserPath) {
-			return nil, errors.Errorf("User path %s=%s is not relative", name, userPath)
+			return nil, fmt.Errorf("user path %s=%s is not relative", name, userPath)
 		}
 		if !filepath.IsLocal(cleanUserPath) {
-			return nil, errors.Errorf("User path %s=%s is not local", name, userPath)
+			return nil, fmt.Errorf("user path %s=%s is not local", name, userPath)
 		}
 
 		absPath := filepath.Join(execPath, cleanUserPath)
@@ -82,7 +81,7 @@ func ResolveRPackInputs(configInputs map[string]string, execPath string) ([]*RPa
 
 		isDir, err := util.CheckFileOrDirExists(absPath)
 		if err != nil {
-			return nil, errors.Wrapf(err, "User path %s=%s does not exist", name, userPath)
+			return nil, fmt.Errorf("user path %s=%s does not exist: %w", name, userPath, err)
 		}
 		fileType := RPackInputTypeFile
 		if isDir {
@@ -112,7 +111,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	packCachePath := filepath.Join(execPath, RPackCacheDir, util.Sha256String(ci.Config.Source))
 	err := os.MkdirAll(packCachePath, 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not setup cache path %s", packCachePath)
+		return nil, fmt.Errorf("could not setup cache path %s: %w", packCachePath, err)
 	}
 
 	// Setup source path
@@ -121,7 +120,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	// since it creates symlinks for local references
 	err = os.MkdirAll(filepath.Dir(packSourcePath), 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not setup source path %s", packSourcePath)
+		return nil, fmt.Errorf("could not setup source path %s: %w", packSourcePath, err)
 	}
 
 	// Setup run path
@@ -131,12 +130,12 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	if _, err = os.Stat(packRunPath); err == nil {
 		err = os.RemoveAll(packRunPath)
 		if err != nil {
-			return nil, errors.Wrapf(err, "Could not cleanup run path: %s", packRunPath)
+			return nil, fmt.Errorf("could not cleanup run path: %s: %w", packRunPath, err)
 		}
 	}
 	err = os.MkdirAll(packRunPath, 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not setup run path %s", packRunPath)
+		return nil, fmt.Errorf("could not setup run path %s: %w", packRunPath, err)
 	}
 
 	// Setup tmp path
@@ -145,17 +144,17 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	if _, err = os.Stat(packTempPath); err == nil {
 		err = os.RemoveAll(packTempPath)
 		if err != nil {
-			return nil, errors.Wrapf(err, "Could not cleanup temp path: %s", packTempPath)
+			return nil, fmt.Errorf("could not cleanup temp path: %s: %w", packTempPath, err)
 		}
 	}
 	err = os.MkdirAll(packTempPath, 0o755) //nolint:gosec // intentional: standard directory permissions
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not setup temp path %s", packTempPath)
+		return nil, fmt.Errorf("could not setup temp path %s: %w", packTempPath, err)
 	}
 
 	packageAddr, subDir, err := extractPackageAddrSubDir(ci.Config.Source)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Failed to extract package addr and subdir from source path: %s", ci.Config.Source)
+		return nil, fmt.Errorf("failed to extract package addr and subdir from source path: %s: %w", ci.Config.Source, err)
 	}
 
 	slog.Debug("Load RPackDef", "source", packSourcePath, "dest", ci.Config.Source)
@@ -163,7 +162,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	fetcher := getsource.DefaultFetcher()
 	err = fetcher.Fetch(context.Background(), packSourcePath, packageAddr)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not get source %q", ci.Config.Source)
+		return nil, fmt.Errorf("could not get source %q: %w", ci.Config.Source, err)
 	}
 
 	packSourcePath = filepath.Join(packSourcePath, subDir)
@@ -173,7 +172,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	// Resolve user specified inputs
 	resolvedInputs, err := ResolveRPackInputs(ci.Config.Config.Inputs, execPath)
 	if err != nil {
-		return nil, errors.Wrap(err, "Could not resolve user inputs")
+		return nil, fmt.Errorf("could not resolve user inputs: %w", err)
 	}
 
 	return &RPackInstance{
@@ -190,7 +189,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 func extractPackageAddrSubDir(src string) (pkgDir, subDir string, err error) {
 	result, err := getsource.NormalizeSource(src)
 	if err != nil {
-		return "", "", errors.Wrap(err, "Source detection failed")
+		return "", "", fmt.Errorf("source detection failed: %w", err)
 	}
 	slog.Debug("Detect source", "result", result)
 
@@ -219,7 +218,7 @@ type RPackDefInstance struct {
 // ValidateConfig validates the values and inputs of a RPack against the schema of a RPackDef.
 func (i *RPackDefInstance) ValidateConfig(c *RPackConfig) error {
 	if err := i.ConfigValidator.Validate(c.Config); err != nil {
-		return errors.Wrap(err, "Validation of config failed")
+		return fmt.Errorf("validation of config failed: %w", err)
 	}
 	return nil
 }
@@ -234,26 +233,26 @@ func ValidateRPackDef(defDir string) (*RPackDef, error) {
 	defPath := filepath.Join(defDir, RPackDefDefaultFilename)
 	def, err := LoadRPackDef(defPath)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not load rpack definition file %s", defPath)
+		return nil, fmt.Errorf("could not load rpack definition file %s: %w", defPath, err)
 	}
 	if err := def.ValidateSchema(); err != nil {
-		return nil, errors.Wrapf(err, "Definition schema validation failed: %s", defPath)
+		return nil, fmt.Errorf("definition schema validation failed: %s: %w", defPath, err)
 	}
 	// Check optional schema.cue is parseable
 	schemaFile := filepath.Join(defDir, RPackDefSchemaFilename)
 	if _, statErr := os.Stat(schemaFile); statErr == nil {
 		b, readErr := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
 		if readErr != nil {
-			return nil, errors.Wrapf(readErr, "Failed to open schema file: %s", schemaFile)
+			return nil, fmt.Errorf("failed to open schema file: %s: %w", schemaFile, readErr)
 		}
 		if _, cueErr := NewCueValidator(b, RPackDefSchemaName); cueErr != nil {
-			return nil, errors.Wrapf(cueErr, "Could not create validation context from path %s in schema file %s", RPackDefSchemaName, schemaFile)
+			return nil, fmt.Errorf("could not create validation context from path %s in schema file %s: %w", RPackDefSchemaName, schemaFile, cueErr)
 		}
 	}
 	// Check script exists
 	scriptPath := filepath.Join(defDir, RPackDefScriptFilename)
 	if _, statErr := os.Stat(scriptPath); statErr != nil {
-		return nil, errors.Wrapf(statErr, "Could not access script file: %s", scriptPath)
+		return nil, fmt.Errorf("could not access script file: %s: %w", scriptPath, statErr)
 	}
 	return def, nil
 }
@@ -271,11 +270,11 @@ func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
 	if _, statErr := os.Stat(schemaFile); statErr == nil {
 		b, readErr := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
 		if readErr != nil {
-			return nil, errors.Wrapf(readErr, "Failed to open schema file: %s", schemaFile)
+			return nil, fmt.Errorf("failed to open schema file: %s: %w", schemaFile, readErr)
 		}
 		vc, readErr = NewCueValidator(b, RPackDefSchemaName)
 		if readErr != nil {
-			return nil, errors.Wrapf(readErr, "Could not create validation context from path %s in schema file %s", RPackDefSchemaName, schemaFile)
+			return nil, fmt.Errorf("could not create validation context from path %s in schema file %s: %w", RPackDefSchemaName, schemaFile, readErr)
 		}
 	} else {
 		vc = &EmptyValidator{}

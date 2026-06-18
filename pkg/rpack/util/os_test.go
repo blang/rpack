@@ -59,8 +59,8 @@ func TestCheckFileExists(t *testing.T) {
 			t.Errorf("Expected error for non-existent file %s, got nil", nonExistentPath)
 		}
 		// Check for the expected error substring.
-		if !strings.Contains(err.Error(), "File does not exist") {
-			t.Errorf("Expected error to contain 'File does not exist', got: %v", err)
+		if !strings.Contains(err.Error(), "file does not exist") {
+			t.Errorf("Expected error to contain 'file does not exist', got: %v", err)
 		}
 	})
 
@@ -71,8 +71,8 @@ func TestCheckFileExists(t *testing.T) {
 		if err == nil {
 			t.Errorf("Expected error for directory path %s, got nil", tempDir)
 		}
-		if !strings.Contains(err.Error(), "Path is a directory") {
-			t.Errorf("Expected error to contain 'Path is a directory', got: %v", err)
+		if !strings.Contains(err.Error(), "path is a directory") {
+			t.Errorf("Expected error to contain 'path is a directory', got: %v", err)
 		}
 	})
 

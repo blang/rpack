@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pkg/errors"
+	"fmt"
 )
 
 // FSHandle is returned by resolver and represents a file handle with a friendly name such as
@@ -62,17 +62,17 @@ func (f *FileBackedFSHandle) FriendlyPath() string {
 func (f *FileBackedFSHandle) Read() ([]byte, error) {
 	content, err := os.ReadFile(f.absPath)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Could not read %s", f.friendlyPath)
+		return nil, fmt.Errorf("could not read %s: %w", f.friendlyPath, err)
 	}
 	return content, nil
 }
 
 func (f *FileBackedFSHandle) Write(b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(f.absPath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
-		return errors.Wrapf(err, "Could not write %s", f.friendlyPath)
+		return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
 	}
 	if err := os.WriteFile(f.absPath, b, 0o644); err != nil { //nolint:gosec // intentional: standard file permissions for package manager output
-		return errors.Wrapf(err, "Could not write %s", f.friendlyPath)
+		return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func (f *FileBackedFSHandle) Stat() (_dir, _exists bool, _err error) {
 	if os.IsNotExist(err) {
 		return false, false, nil
 	} else if err != nil {
-		return false, false, errors.Wrapf(err, "Error accessing file: %s", f.friendlyPath)
+		return false, false, fmt.Errorf("error accessing file: %s: %w", f.friendlyPath, err)
 	}
 
 	return fileInfo.IsDir(), true, nil
@@ -93,7 +93,7 @@ func (f *FileBackedFSHandle) Stat() (_dir, _exists bool, _err error) {
 func (f *FileBackedFSHandle) ReadDir() (_files, _dirs []FSHandle, _err error) {
 	entries, err := os.ReadDir(f.absPath)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "Error readdir: %s", f.friendlyPath)
+		return nil, nil, fmt.Errorf("error readdir: %s: %w", f.friendlyPath, err)
 	}
 	var files []FSHandle
 	var dirs []FSHandle
@@ -122,7 +122,7 @@ func (f *FileBackedFSHandle) IndirectTargetPath() string {
 func (f *FileBackedFSHandle) Transfer(dest string) error {
 	err := os.Rename(f.absPath, dest)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to transfer %s to %s", f.friendlyPath, dest)
+		return fmt.Errorf("failed to transfer %s to %s: %w", f.friendlyPath, dest, err)
 	}
 	return nil
 }

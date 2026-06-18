@@ -115,15 +115,15 @@ func (g *ociDistributionGetter) context() context.Context {
 
 func (g *ociDistributionGetter) resolveRepositoryRef(u *url.URL) (*orasRegistry.Reference, error) {
 	if !u.IsAbs() {
-		return nil, fmt.Errorf("OCI source type requires an absolute URL")
+		return nil, fmt.Errorf("oCI source type requires an absolute URL")
 	}
 	if u.Scheme != "oci" {
-		return nil, fmt.Errorf("OCI source type only supports oci:// URL scheme")
+		return nil, fmt.Errorf("oCI source type only supports oci:// URL scheme")
 	}
 	registryDomainName := u.Host
 	repositoryName := strings.TrimPrefix(u.Path, "/")
 	if repositoryName == "" {
-		return nil, fmt.Errorf("OCI source requires a repository path")
+		return nil, fmt.Errorf("oCI source requires a repository path")
 	}
 	ref := &orasRegistry.Reference{
 		Registry:   registryDomainName,

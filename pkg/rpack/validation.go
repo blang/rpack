@@ -1,9 +1,10 @@
 package rpack
 
 import (
+	"fmt"
+
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
-	"github.com/pkg/errors"
 )
 
 // SchemaValidator validates data against a schema.
@@ -30,7 +31,7 @@ func NewCueValidator(schemaBytes []byte, path string) (*CueValidator, error) {
 	ctx := cuecontext.New()
 	schema := ctx.CompileBytes(schemaBytes).LookupPath(cue.ParsePath(path))
 	if !schema.Exists() {
-		return nil, errors.Errorf("Cue Schema %s does not exist", path)
+		return nil, fmt.Errorf("cue Schema %s does not exist", path)
 	}
 
 	return &CueValidator{

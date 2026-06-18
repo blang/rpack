@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/pkg/errors"
+	"fmt"
 )
 
 // CopyFile copies a file from src to dst.
@@ -41,7 +41,7 @@ func CheckFileExists(name string) error {
 		return err
 	}
 	if !exists {
-		return errors.Errorf("File does not exist: %s", name)
+		return fmt.Errorf("file does not exist: %s", name)
 	}
 	return nil
 }
@@ -52,12 +52,12 @@ func FileExists(name string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	} else if err != nil {
-		return true, errors.Wrapf(err, "Error accessing file: %s", name)
+		return true, fmt.Errorf("error accessing file: %s: %w", name, err)
 	}
 
 	// Check if the path is actually a directory.
 	if fileInfo.IsDir() {
-		return true, errors.Errorf("Path is a directory, not a file: %s", name)
+		return true, fmt.Errorf("path is a directory, not a file: %s", name)
 	}
 	return true, nil
 }
@@ -67,9 +67,9 @@ func CheckFileOrDirExists(name string) (dir bool, err error) {
 	// Try to obtain the file information.
 	fileInfo, err := os.Stat(name)
 	if os.IsNotExist(err) {
-		return false, errors.Wrapf(err, "File or Dir does not exist: %s", name)
+		return false, fmt.Errorf("file or Dir does not exist: %s: %w", name, err)
 	} else if err != nil {
-		return false, errors.Wrapf(err, "Error accessing file or dir: %s", name)
+		return false, fmt.Errorf("error accessing file or dir: %s: %w", name, err)
 	}
 
 	// Check if the path is actually a directory.

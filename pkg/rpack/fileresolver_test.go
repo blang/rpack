@@ -50,7 +50,7 @@ func TestNewFileResolver(t *testing.T) {
 	// Failure case: pass a file instead of a directory.
 	notADir := createTempFile(t, defDir)
 	_, err = NewFileResolver(notADir, runDir, tempDir, execDir, resolvedInputs)
-	if err == nil || !strings.Contains(err.Error(), "Failed to use defSourcePath") {
+	if err == nil || !strings.Contains(err.Error(), "failed to use defSourcePath") {
 		t.Errorf("expected error when defSourcePath is not a directory, got: %v", err)
 	}
 }
@@ -132,7 +132,7 @@ func TestResolveInput(t *testing.T) {
 	})
 	t.Run("map: invalid mapping", func(t *testing.T) {
 		_, err := fr.ResolveInput("map:nonexistent")
-		if err == nil || !strings.Contains(err.Error(), "Could not find mapped input") {
+		if err == nil || !strings.Contains(err.Error(), "could not find mapped input") {
 			t.Errorf("expected error for unknown mapping, got: %v", err)
 		}
 	})
@@ -245,7 +245,7 @@ func TestResolveOutput(t *testing.T) {
 	})
 	t.Run("output with unknown prefix error", func(t *testing.T) {
 		_, err := fr.ResolveOutput("map:somepath")
-		if err == nil || !strings.Contains(err.Error(), "Output path needs to use temp: prefix") {
+		if err == nil || !strings.Contains(err.Error(), "output path needs to use temp: prefix") {
 			t.Errorf("expected error for unknown output prefix, got: %v", err)
 		}
 	})

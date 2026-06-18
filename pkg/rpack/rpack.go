@@ -4,7 +4,8 @@ import (
 	_ "embed"
 	"path/filepath"
 
-	"github.com/pkg/errors"
+	"fmt"
+
 	"github.com/samber/lo"
 
 	"github.com/blang/rpack/pkg/rpack/util"
@@ -35,7 +36,7 @@ type RPackConfigConfig struct {
 func (c *RPackConfig) Validate() error {
 	err := RPackSchemaValidator.Validate(c)
 	if err != nil {
-		return errors.Wrap(err, "Validating rpack against schema failed")
+		return fmt.Errorf("validating rpack against schema failed: %w", err)
 	}
 	return nil
 }
@@ -96,7 +97,7 @@ func NewRPackLockFile() *RPackLockFile {
 // Validate checks the lock file for errors.
 func (f *RPackLockFile) Validate() error {
 	if f.SchemaVersion != RPackLockFileCurrentSchemaVersion {
-		return errors.Errorf("Unsupported lockfile schema version %q, supported %q", f.SchemaVersion, RPackLockFileCurrentSchemaVersion)
+		return fmt.Errorf("unsupported lockfile schema version %q, supported %q", f.SchemaVersion, RPackLockFileCurrentSchemaVersion)
 	}
 	return nil
 }
@@ -139,7 +140,7 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 		}
 		chsum, err := util.Sha256File(filePath)
 		if err != nil {
-			return nil, errors.Wrapf(err, "Could not calculate checksum for %s: %s", file.Path, filePath)
+			return nil, fmt.Errorf("could not calculate checksum for %s: %s: %w", file.Path, filePath, err)
 		}
 		if file.Sha != chsum {
 			res.Modified = append(res.Modified, file.Path)

@@ -3,7 +3,8 @@ package rpack
 import (
 	_ "embed"
 
-	"github.com/pkg/errors"
+	"fmt"
+
 	"github.com/samber/lo"
 )
 
@@ -45,7 +46,7 @@ var RPackDefSchemaValidator = lo.Must(NewCueValidator([]byte(RPackDefSchema), RP
 func (def *RPackDef) ValidateSchema() error {
 	err := RPackDefSchemaValidator.Validate(def)
 	if err != nil {
-		return errors.Wrap(err, "Validating rpack definition failed")
+		return fmt.Errorf("validating rpack definition failed: %w", err)
 	}
 	return nil
 }

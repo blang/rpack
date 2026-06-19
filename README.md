@@ -235,6 +235,13 @@ Distribute via git, https, or s3. Publish to an OCI registry with `rpack publish
 
 See [examples/](./examples) for complete examples.
 
+## Agentic Usage
+
+The [skills/](./skills) directory contains AI agent skills for guided rpack development. Install them in your agent harness to let LLMs create and test rpack definitions:
+
+- **rpack-author** — creates rpack definitions with correct structure, Lua scripting, and CUE schemas
+- **rpack-tester** — generates tests that validate rpack output and catch common mistakes
+
 ## CLI reference
 
 ### `rpack run [--def <dir>] [flags] [<config-file>]`

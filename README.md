@@ -237,14 +237,30 @@ See [examples/](./examples) for complete examples.
 
 ## CLI reference
 
-### `rpack run <config>`
+### `rpack run [--def <dir>] [flags] [<config-file>]`
 
-Execute an rpack.
+Execute an rpack from a user config file or a local definition directory.
+
+**Normal mode** — full pipeline (source download, validation, execution, lockfile):
+```
+rpack run ./app.rpack.yaml
+rpack run ./app.rpack.yaml --dry-run
+```
+
+**`--def` mode** — run directly against a local definition (skips source download, config loading, lockfile):
+```
+rpack run --def ./my-rpack --set author=test --output-dir /tmp/out
+rpack run --def ./my-rpack --set author=test --dry-run
+```
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--dry-run` | | Preview changes without writing files |
-| `--force` | `-f` | Overwrite files, ignore lockfile integrity warnings |
+| `--def` | `-d` | Use a local definition directory. Mutually exclusive with `<config-file>`. |
+| `--set key=value` | | Set a config value (`--def` only, repeatable). Dot notation for nesting, auto-detects int/bool/float/string. |
+| `--set-input name=path` | | Map an input name to a local file or directory (`--def` only, repeatable). |
+| `--output-dir` | | Write output files to this directory. Creates `meta.json` alongside. Mutually exclusive with `--dry-run`. |
+| `--dry-run` | | Preview changes. In `--def` mode, prints each file's path and content to stdout. |
+| `--force` | `-f` | Overwrite files, ignore lockfile integrity warnings. With `--output-dir`, allow overwriting non-empty directories. |
 | `--working-dir` | `-w` | Override working directory (default: config file location) |
 | `--debug` | | Enable verbose logging |
 
@@ -256,6 +272,21 @@ Verify lockfile integrity — checks that all managed files exist and haven't be
 |------|-------|-------------|
 | `--working-dir` | `-w` | Override working directory |
 | `--debug` | | Enable verbose logging |
+
+### `rpack test --def <dir> [--filter <name>] [--init <name>]`
+
+Discover and run test scripts in a definition's `tests/` directory.
+
+Each test is a subdirectory of `tests/` containing an executable script
+(`run.sh`, `run.py`, or `run`). The script receives two positional arguments:
+`$1` = definition directory, `$2` = temp output directory. Exit 0 = pass,
+non-zero = fail.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--def` | `-d` | Path to rpack definition directory (required) |
+| `--filter` | | Run only tests whose directory name contains this substring |
+| `--init <name>` | | Scaffold a new test directory `tests/<name>/` with a template `run.sh` |
 
 ### `rpack validate --def <dir>`
 

@@ -78,7 +78,9 @@ func NewRPackFS(enforcePure bool, defSourcePath, runPath, tempPath, execPath str
 // Check verifies the filesystem state.
 func (fs *RPackFS) Check() error {
 	if fs.PureCheck != nil {
-		return fmt.Errorf("pure fileaccess check failed: %w: %w", ErrPurityCheck, fs.PureCheck.CheckConflicts())
+		if err := fs.PureCheck.CheckConflicts(); err != nil {
+			return fmt.Errorf("pure fileaccess check failed: %w: %w", ErrPurityCheck, err)
+		}
 	}
 	return nil
 }

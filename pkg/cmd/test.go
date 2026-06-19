@@ -76,8 +76,15 @@ func init() {
 }
 
 // runTests discovers and executes all test scripts in tests/*/.
-func runTests(defDir, filter string) error {
-	testsDir := filepath.Join(defDir, "tests")
+func runTests(defDir, filter string) error { //nolint:gocognit // test orchestration requires sequential setup and execution
+	// Convert defDir to absolute path so test scripts receive a stable path
+	// regardless of their working directory
+	absDefDir, err := filepath.Abs(defDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve definition path: %w", err)
+	}
+
+	testsDir := filepath.Join(absDefDir, "tests")
 	entries, err := os.ReadDir(testsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: no tests found in %s\n", testsDir)
@@ -122,7 +129,7 @@ func runTests(defDir, filter string) error {
 		}
 
 		start := time.Now()
-		cmd := exec.Command(tc.script, defDir, outDir) //nolint:gosec // script path from trusted test discovery, defDir/outDir from CLI
+		cmd := exec.Command(tc.script, absDefDir, outDir) //nolint:gosec // script path from trusted test discovery, absDefDir/outDir from CLI
 		cmd.Dir = filepath.Join(testsDir, tc.name)
 		output, runErr := cmd.CombinedOutput()
 		elapsed := time.Since(start)

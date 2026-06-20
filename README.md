@@ -230,10 +230,101 @@ An rpack bundle is a directory containing:
 | `schema.cue` | No | CUE schema to validate user `values`. |
 | `files/` | No | Static files accessible via `rpack:` prefix. |
 
-Validate the bundle with `rpack validate --def ./your-rpack` before publishing.
-Distribute via git, https, or s3. Publish to an OCI registry with `rpack publish -T oci`.
+Validate the bundle with `rpack validate --def ./your-rpack` before distributing.
+
+Distribute via git, https, s3, or OCI registries. Bundle into archives with `rpack bundle`,
+or publish directly to an OCI registry with `rpack publish -T oci`.
 
 See [examples/](./examples) for complete examples.
+
+## Distributing via OCI registries
+
+RPack definitions can be stored in any OCI-compliant container registry (Docker Hub,
+GitHub Container Registry, GitLab, Harbor, etc.) using the OCI Distribution protocol.
+
+### Using `rpack bundle` + `oras push`
+
+The recommended workflow is to bundle your definition into a zip archive, then push
+it with the [ORAS CLI](https://oras.land/docs/installation):
+
+```shell
+# 1. Install ORAS (https://oras.land/docs/installation)
+# 2. Log in to your registry
+oras login registry.example.com
+
+# 3. Bundle your definition
+rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+
+# 4. Push to the registry
+oras push \
+  --artifact-type=application/vnd.rpack.modulepkg \
+  registry.example.com/myrpack:v1.0.0 \
+  ./dist/mypack.zip:archive/zip
+```
+
+Users reference the OCI-hosted definition in their config:
+
+```yaml
+"@schema_version": "v1"
+source: "oci://registry.example.com/myrpack?tag=v1.0.0"
+config:
+  values:
+    author: "blang"
+```
+
+### Registry-specific examples
+
+**Docker Hub:**
+```shell
+oras login docker.io
+rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+oras push --artifact-type=application/vnd.rpack.modulepkg \
+  docker.io/username/myrpack:v1 ./dist/mypack.zip:archive/zip
+```
+
+**GitHub Container Registry:**
+```shell
+oras login ghcr.io
+rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+oras push --artifact-type=application/vnd.rpack.modulepkg \
+  ghcr.io/owner/myrpack:v1 ./dist/mypack.zip:archive/zip
+```
+
+**GitLab Container Registry:**
+```shell
+oras login registry.gitlab.com
+rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+oras push --artifact-type=application/vnd.rpack.modulepkg \
+  registry.gitlab.com/group/myrpack:v1 ./dist/mypack.zip:archive/zip
+```
+
+### Using `rpack publish` (convenience)
+
+As an alternative, `rpack publish` bundles and pushes in one step:
+
+```shell
+rpack publish -d ./myrpack -T oci -t oci://registry.example.com/myrpack?tag=v1.0.0
+```
+
+Credentials are resolved automatically from Podman/Docker login, credential helpers,
+or `OCI_USERNAME`/`OCI_PASSWORD` environment variables.
+
+### Using `rpack bundle` for non-OCI distribution
+
+The `bundle` command also supports tar archives for HTTP/S3 distribution:
+
+```shell
+# Create different archive formats
+rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+rpack bundle -d ./myrpack -f tar.xz -o ./dist/mypack.tar.xz
+rpack bundle -d ./myrpack -f tar.bz2 -o ./dist/mypack.tar.bz2
+```
+
+Upload to any HTTP server or S3 bucket, then reference in config:
+
+```yaml
+source: "https://releases.example.com/mypack.tar.xz"
+```
 
 ## Agentic Usage
 
@@ -304,6 +395,24 @@ script.lua exists, and schema.cue (if present) is syntactically correct.
 |------|-------|-------------|
 | `--def` | `-d` | Path to rpack definition directory (required) |
 | `--debug` | | Enable verbose logging |
+
+### `rpack bundle --def <dir> --format <format> --output <path>`
+
+Bundle an rpack definition directory into a single archive file.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--def` | `-d` | Path to rpack definition directory (required) |
+| `--format` | `-f` | Archive format: `zip`, `tar.xz`, or `tar.bz2` (required) |
+| `--output` | `-o` | Output archive path (required) |
+| `--debug` | | Enable verbose logging |
+
+**Examples:**
+```
+rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+rpack bundle -d ./myrpack -f tar.xz -o ./dist/mypack.tar.xz
+rpack bundle -d ./myrpack -f tar.bz2 -o ./dist/mypack.tar.bz2
+```
 
 ### `rpack publish --def <dir> --type <type> --target <target>`
 

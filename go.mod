@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	cuelang.org/go v0.12.1
+	github.com/dsnet/compress v0.0.1
 	github.com/golang-cz/devslog v0.0.13
 	github.com/hashicorp/go-getter v1.8.6
 	github.com/itchyny/gojq v0.12.17

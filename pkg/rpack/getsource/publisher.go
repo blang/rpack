@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	bz2 "github.com/dsnet/compress/bzip2"
 	"github.com/ulikunitz/xz"
 
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -171,6 +172,49 @@ func PublishArchive(defDir, archivePath string) error {
 	return createTarXZ(defDir, archivePath)
 }
 
+// BundleZip creates a zip archive of the definition directory.
+// defDir is validated before archiving.
+func BundleZip(defDir, archivePath string) error {
+	if err := validateDefDir(defDir); err != nil {
+		return fmt.Errorf("definition validation failed: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+	zipData, err := zipDirectory(defDir)
+	if err != nil {
+		return fmt.Errorf("creating zip: %w", err)
+	}
+	if err := os.WriteFile(archivePath, zipData, 0o644); err != nil { //nolint:gosec // archive output permissions
+		return fmt.Errorf("writing zip file: %w", err)
+	}
+	return nil
+}
+
+// BundleTarXZ creates a tar.xz archive of the definition directory.
+// defDir is validated before archiving.
+func BundleTarXZ(defDir, archivePath string) error {
+	if err := validateDefDir(defDir); err != nil {
+		return fmt.Errorf("definition validation failed: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+	return createTarXZ(defDir, archivePath)
+}
+
+// BundleTarBZ2 creates a tar.bz2 archive of the definition directory.
+// defDir is validated before archiving.
+func BundleTarBZ2(defDir, archivePath string) error {
+	if err := validateDefDir(defDir); err != nil {
+		return fmt.Errorf("definition validation failed: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+	return createTarBZ2(defDir, archivePath)
+}
+
 // createTarXZ creates a tar.xz archive of the source directory at destPath.
 //
 //nolint:gocognit,gocyclo // file system walk + writer chain is inherently detailed
@@ -234,6 +278,77 @@ func createTarXZ(srcDir, destPath string) error {
 		walkErr = closeErr
 	}
 	if closeErr := xzWriter.Close(); closeErr != nil && walkErr == nil {
+		walkErr = closeErr
+	}
+	if closeErr := f.Close(); closeErr != nil && walkErr == nil {
+		walkErr = closeErr
+	}
+	return walkErr
+}
+
+// createTarBZ2 creates a tar.bz2 archive of the source directory at destPath.
+//
+//nolint:gocognit,gocyclo // file system walk + writer chain is inherently detailed
+func createTarBZ2(srcDir, destPath string) error {
+	f, err := os.Create(destPath) //nolint:gosec // destPath is user-specified output path
+	if err != nil {
+		return fmt.Errorf("creating archive file: %w", err)
+	}
+
+	bz2Writer, err := bz2.NewWriter(f, nil)
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("creating bz2 writer: %w", err)
+	}
+
+	tw := tar.NewWriter(bz2Writer)
+
+	walkErr := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, relErr := filepath.Rel(srcDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		if relPath == "tests" || strings.HasPrefix(relPath, "tests/") || strings.HasPrefix(relPath, "tests"+string(filepath.Separator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return statErr
+		}
+		header, headerErr := tar.FileInfoHeader(info, "")
+		if headerErr != nil {
+			return headerErr
+		}
+		header.Name = relPath
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		src, openErr := os.Open(path) //nolint:gosec // path from WalkDir
+		if openErr != nil {
+			return openErr
+		}
+		_, copyErr := io.Copy(tw, src)
+		_ = src.Close() // close immediately after copy, don't defer in WalkDir callback
+		if copyErr != nil {
+			return copyErr
+		}
+		return nil
+	})
+
+	// Close in order: tar → bz2 → file. Preserve first error (walkErr takes precedence).
+	if closeErr := tw.Close(); closeErr != nil && walkErr == nil {
+		walkErr = closeErr
+	}
+	if closeErr := bz2Writer.Close(); closeErr != nil && walkErr == nil {
 		walkErr = closeErr
 	}
 	if closeErr := f.Close(); closeErr != nil && walkErr == nil {

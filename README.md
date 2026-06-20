@@ -239,92 +239,30 @@ See [examples/](./examples) for complete examples.
 
 ## Distributing via OCI registries
 
-RPack definitions can be stored in any OCI-compliant container registry (Docker Hub,
-GitHub Container Registry, GitLab, Harbor, etc.) using the OCI Distribution protocol.
-
-### Using `rpack bundle` + `oras push`
-
-The recommended workflow is to bundle your definition into a zip archive, then push
-it with the [ORAS CLI](https://oras.land/docs/installation):
+Bundle your definition, then push with either `oras` or `rpack publish` — they produce the same OCI artifact:
 
 ```shell
-# 1. Install ORAS (https://oras.land/docs/installation)
-# 2. Log in to your registry
-oras login registry.example.com
-
-# 3. Bundle your definition
+# Bundle + push with oras
 rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
+oras push --artifact-type=application/vnd.rpack.modulepkg \
+  registry.example.com/myrpack:v1 ./dist/mypack.zip:archive/zip
 
-# 4. Push to the registry
-oras push \
-  --artifact-type=application/vnd.rpack.modulepkg \
-  registry.example.com/myrpack:v1.0.0 \
-  ./dist/mypack.zip:archive/zip
+# Equivalent one-liner with rpack publish
+rpack publish -d ./myrpack -T oci -t oci://registry.example.com/myrpack?tag=v1
 ```
+
+`rpack publish` is a convenience wrapper that bundles and pushes in one step.
+Credentials are resolved from Podman/Docker login, credential helpers, or
+`OCI_USERNAME`/`OCI_PASSWORD` environment variables.
 
 Users reference the OCI-hosted definition in their config:
 
 ```yaml
 "@schema_version": "v1"
-source: "oci://registry.example.com/myrpack?tag=v1.0.0"
-config:
-  values:
-    author: "blang"
+source: "oci://registry.example.com/myrpack?tag=v1"
 ```
 
-### Registry-specific examples
-
-**Docker Hub:**
-```shell
-oras login docker.io
-rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
-oras push --artifact-type=application/vnd.rpack.modulepkg \
-  docker.io/username/myrpack:v1 ./dist/mypack.zip:archive/zip
-```
-
-**GitHub Container Registry:**
-```shell
-oras login ghcr.io
-rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
-oras push --artifact-type=application/vnd.rpack.modulepkg \
-  ghcr.io/owner/myrpack:v1 ./dist/mypack.zip:archive/zip
-```
-
-**GitLab Container Registry:**
-```shell
-oras login registry.gitlab.com
-rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
-oras push --artifact-type=application/vnd.rpack.modulepkg \
-  registry.gitlab.com/group/myrpack:v1 ./dist/mypack.zip:archive/zip
-```
-
-### Using `rpack publish` (convenience)
-
-As an alternative, `rpack publish` bundles and pushes in one step:
-
-```shell
-rpack publish -d ./myrpack -T oci -t oci://registry.example.com/myrpack?tag=v1.0.0
-```
-
-Credentials are resolved automatically from Podman/Docker login, credential helpers,
-or `OCI_USERNAME`/`OCI_PASSWORD` environment variables.
-
-### Using `rpack bundle` for non-OCI distribution
-
-The `bundle` command also supports tar archives for HTTP/S3 distribution:
-
-```shell
-# Create different archive formats
-rpack bundle -d ./myrpack -f zip -o ./dist/mypack.zip
-rpack bundle -d ./myrpack -f tar.xz -o ./dist/mypack.tar.xz
-rpack bundle -d ./myrpack -f tar.bz2 -o ./dist/mypack.tar.bz2
-```
-
-Upload to any HTTP server or S3 bucket, then reference in config:
-
-```yaml
-source: "https://releases.example.com/mypack.tar.xz"
-```
+The `bundle` command also supports `tar.xz` and `tar.bz2` for HTTP/S3 distribution.
 
 ## Agentic Usage
 

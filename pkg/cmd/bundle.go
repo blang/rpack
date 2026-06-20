@@ -1,4 +1,4 @@
-// Package cmd implements the bundle command.
+// Package cmd implements the CLI commands for rpack.
 package cmd
 
 import (

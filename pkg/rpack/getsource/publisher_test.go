@@ -306,3 +306,149 @@ func TestPublishRPack_ValidatesDef(t *testing.T) {
 		}
 	})
 }
+
+//nolint:gocognit,gocyclo // test function with multiple subtests is inherently detailed
+func TestBundleZip(t *testing.T) {
+	t.Run("creates valid zip", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		dest := filepath.Join(t.TempDir(), "out.zip")
+		err := BundleZip(defDir, dest)
+		if err != nil {
+			t.Fatalf("BundleZip failed: %v", err)
+		}
+		info, err := os.Stat(dest)
+		if err != nil {
+			t.Fatalf("archive not found: %v", err)
+		}
+		if info.Size() == 0 {
+			t.Error("archive is empty")
+		}
+		// Verify it's a valid zip
+		data, err := os.ReadFile(dest) //nolint:gosec // dest is test temp file
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			t.Fatalf("not a valid zip: %v", err)
+		}
+		entries := make(map[string]bool)
+		for _, f := range reader.File {
+			entries[f.Name] = true
+		}
+		if !entries["rpack.yaml"] {
+			t.Error("missing rpack.yaml in zip")
+		}
+		if !entries["script.lua"] {
+			t.Error("missing script.lua in zip")
+		}
+	})
+
+	t.Run("excludes tests directory", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		testsDir := filepath.Join(defDir, "tests")
+		if err := os.MkdirAll(testsDir, 0o750); err != nil { //nolint:gosec // test directory
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(testsDir, "test.lua"), []byte("-- test"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dest := filepath.Join(t.TempDir(), "out.zip")
+		if err := BundleZip(defDir, dest); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(dest) //nolint:gosec // dest is test temp file
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			t.Fatalf("not a valid zip: %v", err)
+		}
+		for _, f := range reader.File {
+			if strings.HasPrefix(f.Name, "tests") {
+				t.Errorf("tests/ should be excluded, found: %s", f.Name)
+			}
+		}
+	})
+
+	t.Run("rejects wrong extension", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		err := BundleZip(defDir, filepath.Join(t.TempDir(), "out.tar.xz"))
+		if err == nil {
+			t.Error("expected error for wrong extension")
+		}
+		if !strings.Contains(err.Error(), ".zip") {
+			t.Errorf("expected .zip in error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects invalid definition", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "rpack.yaml"), []byte("test"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := BundleZip(dir, filepath.Join(t.TempDir(), "out.zip"))
+		if err == nil {
+			t.Error("expected error for invalid definition")
+		}
+	})
+}
+
+func TestBundleTarXZ(t *testing.T) {
+	t.Run("creates valid tar.xz", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		dest := filepath.Join(t.TempDir(), "out.tar.xz")
+		err := BundleTarXZ(defDir, dest)
+		if err != nil {
+			t.Fatalf("BundleTarXZ failed: %v", err)
+		}
+		info, err := os.Stat(dest)
+		if err != nil {
+			t.Fatalf("archive not found: %v", err)
+		}
+		if info.Size() == 0 {
+			t.Error("archive is empty")
+		}
+	})
+
+	t.Run("rejects wrong extension", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		err := BundleTarXZ(defDir, filepath.Join(t.TempDir(), "out.zip"))
+		if err == nil {
+			t.Error("expected error for wrong extension")
+		}
+		if !strings.Contains(err.Error(), ".tar.xz") {
+			t.Errorf("expected .tar.xz in error, got: %v", err)
+		}
+	})
+}
+
+func TestBundleTarBZ2(t *testing.T) {
+	t.Run("creates valid tar.bz2", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		dest := filepath.Join(t.TempDir(), "out.tar.bz2")
+		err := BundleTarBZ2(defDir, dest)
+		if err != nil {
+			t.Fatalf("BundleTarBZ2 failed: %v", err)
+		}
+		info, err := os.Stat(dest)
+		if err != nil {
+			t.Fatalf("archive not found: %v", err)
+		}
+		if info.Size() == 0 {
+			t.Error("archive is empty")
+		}
+	})
+
+	t.Run("rejects wrong extension", func(t *testing.T) {
+		defDir := writeSampleDef(t)
+		err := BundleTarBZ2(defDir, filepath.Join(t.TempDir(), "out.tar.xz"))
+		if err == nil {
+			t.Error("expected error for wrong extension")
+		}
+		if !strings.Contains(err.Error(), ".tar.bz2") {
+			t.Errorf("expected .tar.bz2 in error, got: %v", err)
+		}
+	})
+}

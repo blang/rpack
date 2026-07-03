@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -28,14 +27,20 @@ Archive example:
 
 Authentication for OCI is resolved automatically from Podman/Docker config,
 credential helpers, or OCI_USERNAME/OCI_PASSWORD environment variables.`,
-	Args: cobra.NoArgs,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		defDir, _ := cmd.Flags().GetString("def")
-		pubType, _ := cmd.Flags().GetString("type")
-		target, _ := cmd.Flags().GetString("target")
-
-		if defDir == "" || pubType == "" || target == "" {
-			return cmd.Usage()
+		defDir, err := cmd.Flags().GetString("def")
+		if err != nil {
+			return err
+		}
+		pubType, err := cmd.Flags().GetString("type")
+		if err != nil {
+			return err
+		}
+		target, err := cmd.Flags().GetString("target")
+		if err != nil {
+			return err
 		}
 
 		// Full definition validation (CUE schema, script.lua, schema.cue)
@@ -45,7 +50,7 @@ credential helpers, or OCI_USERNAME/OCI_PASSWORD environment variables.`,
 
 		switch pubType {
 		case "oci":
-			return getsource.PublishRPack(context.Background(), defDir,
+			return getsource.PublishRPack(cmd.Context(), defDir,
 				func(registry, repo string) (getsource.OCIPublisher, error) {
 					return getsource.NewORASStore(registry, repo)
 				}, target)
@@ -62,4 +67,9 @@ func init() {
 	publishCmd.Flags().StringP("def", "d", "", "Path to the rpack definition directory")
 	publishCmd.Flags().StringP("type", "T", "", "Publish type: oci or archive")
 	publishCmd.Flags().StringP("target", "t", "", "Target URL (oci://) or path (.tar.xz)")
+	for _, name := range []string{"def", "type", "target"} {
+		if err := publishCmd.MarkFlagRequired(name); err != nil {
+			panic(err)
+		}
+	}
 }

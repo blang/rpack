@@ -13,9 +13,10 @@ import (
 
 // runCmd represents the run command
 var runCmd = &cobra.Command{
-	Use:   "run [--def <dir>] [flags] [<config-file>]",
-	Short: "Run an rpack file or definition directory",
-	Args:  cobra.MaximumNArgs(1),
+	Use:          "run [--def <dir>] [flags] [<config-file>]",
+	Short:        "Run an rpack file or definition directory",
+	SilenceUsage: true,
+	Args:         cobra.MaximumNArgs(1),
 	Long: `Execute an rpack from a user config file or a local definition directory.
 
 With a config file:
@@ -117,15 +118,15 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 
 	// Run-specific flags (new --def mode)
-	runCmd.Flags().StringP("def", "", "", "Use local definition directory (mutually exclusive with config file)")
+	runCmd.Flags().StringP("def", "d", "", "Use local definition directory (mutually exclusive with config file)")
 	runCmd.Flags().StringSliceP("set", "", nil, "Set a config value (key=value, repeatable)")
 	runCmd.Flags().StringSliceP("set-input", "", nil, "Map an input name to a local file (name=path, repeatable)")
-	runCmd.Flags().StringP("output-dir", "", "", "Write output files to this directory")
+	runCmd.Flags().StringP("output-dir", "o", "", "Write output files to this directory")
 
 	// General execution flags (persistent for future subcommand compatibility)
 	runCmd.PersistentFlags().StringP("working-dir", "w", "", "Override working dir, defaults to location of rpack file")
 	runCmd.PersistentFlags().BoolP("force", "f", false, "Force execution: Overwrite files, ignore warnings")
-	runCmd.PersistentFlags().BoolP("dry-run", "", false, "Dry run execution")
+	runCmd.PersistentFlags().BoolP("dry-run", "n", false, "Dry run execution")
 }
 
 // parseSetFlags parses --set key=value flags into a map[string]any.

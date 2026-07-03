@@ -34,7 +34,7 @@ func (c *Checker) CheckIntegrity(ctx context.Context, name string) error {
 	if len(oldLockIntegrity.Modified) > 0 {
 		modFilesStr := strings.Join(oldLockIntegrity.Modified, ",")
 		slog.Warn("Some files in lockfile were modified outside of rpack", "files", modFilesStr)
-		return fmt.Errorf("some locked files were modified outside of rpack, use force flag to ignore: %s", modFilesStr)
+		return fmt.Errorf("some locked files were modified outside of rpack: %s\nTo overwrite, run: rpack run --force <config>", modFilesStr)
 	}
 
 	// Warn about files that are removed but still in the lockfile

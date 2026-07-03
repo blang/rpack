@@ -2,8 +2,6 @@
 package cmd
 
 import (
-	"context"
-
 	"github.com/spf13/cobra"
 
 	"github.com/blang/rpack/pkg/rpack"
@@ -26,7 +24,7 @@ var checkCmd = &cobra.Command{
 			c.OverrideExecPath = flagWD
 		}
 
-		err = c.CheckIntegrity(context.TODO(), args[0])
+		err = c.CheckIntegrity(cmd.Context(), args[0])
 		if err != nil {
 			return err
 		}

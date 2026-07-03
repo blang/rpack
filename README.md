@@ -273,7 +273,7 @@ The [skills/](./skills) directory contains AI agent skills for guided rpack deve
 
 ## CLI reference
 
-### `rpack run [--def <dir>] [flags] [<config-file>]`
+### `rpack run [-d <dir>] [flags] [<config-file>]`
 
 Execute an rpack from a user config file or a local definition directory.
 
@@ -294,8 +294,8 @@ rpack run --def ./my-rpack --set author=test --dry-run
 | `--def` | `-d` | Use a local definition directory. Mutually exclusive with `<config-file>`. |
 | `--set key=value` | | Set a config value (`--def` only, repeatable). Dot notation for nesting, auto-detects int/bool/float/string. |
 | `--set-input name=path` | | Map an input name to a local file or directory (`--def` only, repeatable). |
-| `--output-dir` | | Write output files to this directory. Creates `meta.json` alongside. Mutually exclusive with `--dry-run`. |
-| `--dry-run` | | Preview changes. In `--def` mode, prints each file's path and content to stdout. |
+| `--output-dir` | `-o` | Write output files to this directory. Creates `meta.json` alongside. Mutually exclusive with `--dry-run`. |
+| `--dry-run` | `-n` | Preview changes. In `--def` mode, prints each file's path and content to stdout. |
 | `--force` | `-f` | Overwrite files, ignore lockfile integrity warnings. With `--output-dir`, allow overwriting non-empty directories. |
 | `--working-dir` | `-w` | Override working directory (default: config file location) |
 | `--debug` | | Enable verbose logging |
@@ -309,7 +309,7 @@ Verify lockfile integrity — checks that all managed files exist and haven't be
 | `--working-dir` | `-w` | Override working directory |
 | `--debug` | | Enable verbose logging |
 
-### `rpack test --def <dir> [--filter <name>] [--init <name>]`
+### `rpack test --def <dir> [--filter <name>] [--init <name>] [--strict]`
 
 Discover and run test scripts in a definition's `tests/` directory.
 
@@ -323,6 +323,7 @@ non-zero = fail.
 | `--def` | `-d` | Path to rpack definition directory (required) |
 | `--filter` | | Run only tests whose directory name contains this substring |
 | `--init <name>` | | Scaffold a new test directory `tests/<name>/` with a template `run.sh` |
+| `--strict` | | Fail when no test scripts are found (default: warn and exit 0) |
 
 ### `rpack validate --def <dir>`
 

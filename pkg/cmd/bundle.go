@@ -31,14 +31,20 @@ oras CLI tool to push the archive:
 
   oras push --artifact-type=application/vnd.rpack.modulepkg \
     registry.example.com/repo:v1 ./dist/mypack.zip:archive/zip`,
-	Args: cobra.NoArgs,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		defDir, _ := cmd.Flags().GetString("def")
-		format, _ := cmd.Flags().GetString("format")
-		output, _ := cmd.Flags().GetString("output")
-
-		if defDir == "" || format == "" || output == "" {
-			return cmd.Usage()
+		defDir, err := cmd.Flags().GetString("def")
+		if err != nil {
+			return err
+		}
+		format, err := cmd.Flags().GetString("format")
+		if err != nil {
+			return err
+		}
+		output, err := cmd.Flags().GetString("output")
+		if err != nil {
+			return err
 		}
 
 		// Full definition validation (CUE schema, script.lua, schema.cue)
@@ -64,4 +70,9 @@ func init() {
 	bundleCmd.Flags().StringP("def", "d", "", "Path to the rpack definition directory")
 	bundleCmd.Flags().StringP("format", "f", "", "Archive format: zip, tar.xz, or tar.bz2")
 	bundleCmd.Flags().StringP("output", "o", "", "Output archive path")
+	for _, name := range []string{"def", "format", "output"} {
+		if err := bundleCmd.MarkFlagRequired(name); err != nil {
+			panic(err)
+		}
+	}
 }

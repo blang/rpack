@@ -38,7 +38,7 @@ fi
 `
 
 var testCmd = &cobra.Command{
-	Use:   "test --def <dir> [--filter <name>] [--init <name>]",
+	Use:   "test --def <dir> [--filter <name>] [--init <name>] [--strict]",
 	Short: "Run rpack definition tests",
 	Long: `Discover and run test scripts in a definition's tests/ directory.
 
@@ -47,24 +47,23 @@ Each test is a subdirectory of tests/ containing an executable script
   $1 = path to the definition directory
   $2 = path to a temp output directory
 Exit 0 for pass, non-zero for fail.`,
-	Args: cobra.NoArgs,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		defDir, err := cmd.Flags().GetString("def")
 		if err != nil {
 			return err
 		}
-		if defDir == "" {
-			return cmd.Usage()
-		}
 
 		filter, _ := cmd.Flags().GetString("filter")
 		initName, _ := cmd.Flags().GetString("init")
+		strict, _ := cmd.Flags().GetBool("strict")
 
 		if initName != "" {
 			return initTest(defDir, initName)
 		}
 
-		return runTests(defDir, filter)
+		return runTests(defDir, filter, strict)
 	},
 }
 
@@ -73,10 +72,14 @@ func init() {
 	testCmd.Flags().StringP("def", "d", "", "Path to rpack definition directory (required)")
 	testCmd.Flags().StringP("filter", "", "", "Run only tests whose name contains this substring")
 	testCmd.Flags().StringP("init", "", "", "Scaffold a new test directory")
+	testCmd.Flags().BoolP("strict", "", false, "Fail when no test scripts are found")
+	if err := testCmd.MarkFlagRequired("def"); err != nil {
+		panic(err)
+	}
 }
 
 // runTests discovers and executes all test scripts in tests/*/.
-func runTests(defDir, filter string) error { //nolint:gocognit // test orchestration requires sequential setup and execution
+func runTests(defDir, filter string, strict bool) error { //nolint:gocognit,gocyclo // test orchestration requires sequential setup and execution
 	// Convert defDir to absolute path so test scripts receive a stable path
 	// regardless of their working directory
 	absDefDir, err := filepath.Abs(defDir)
@@ -87,6 +90,9 @@ func runTests(defDir, filter string) error { //nolint:gocognit // test orchestra
 	testsDir := filepath.Join(absDefDir, "tests")
 	entries, err := os.ReadDir(testsDir)
 	if err != nil {
+		if strict {
+			return fmt.Errorf("no test scripts found in %s", testsDir)
+		}
 		fmt.Fprintf(os.Stderr, "Warning: no tests found in %s\n", testsDir)
 		return nil //nolint:nilerr // not every definition needs tests
 	}
@@ -113,6 +119,9 @@ func runTests(defDir, filter string) error { //nolint:gocognit // test orchestra
 	}
 
 	if len(tests) == 0 {
+		if strict {
+			return fmt.Errorf("no test scripts found in %s", testsDir)
+		}
 		fmt.Fprintf(os.Stderr, "Warning: no tests found in %s\n", testsDir)
 		return nil
 	}

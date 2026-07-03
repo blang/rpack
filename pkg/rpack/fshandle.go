@@ -78,7 +78,7 @@ func (f *FileBackedFSHandle) Write(b []byte) error {
 }
 
 // Stat returns file existence and directory status.
-func (f *FileBackedFSHandle) Stat() (_dir, _exists bool, _err error) {
+func (f *FileBackedFSHandle) Stat() (_exists, _dir bool, _err error) {
 	fileInfo, err := os.Stat(f.absPath)
 	if os.IsNotExist(err) {
 		return false, false, nil
@@ -86,7 +86,7 @@ func (f *FileBackedFSHandle) Stat() (_dir, _exists bool, _err error) {
 		return false, false, fmt.Errorf("error accessing file: %s: %w", f.friendlyPath, err)
 	}
 
-	return fileInfo.IsDir(), true, nil
+	return true, fileInfo.IsDir(), nil
 }
 
 // ReadDir returns directory entries.

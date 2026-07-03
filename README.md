@@ -292,7 +292,8 @@ rpack run --def ./my-rpack --set author=test --dry-run
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--def` | `-d` | Use a local definition directory. Mutually exclusive with `<config-file>`. |
-| `--set key=value` | | Set a config value (`--def` only, repeatable). Dot notation for nesting, auto-detects int/bool/float/string. |
+| `--set key=value` | | Set a config value (`--def` only, repeatable). Dot notation for nesting. Values resolve with the same YAML rules as an `rpack.yaml` file (`42` → number, `true` → bool, `foo` → string). |
+| `--set-string key=value` | | Set a config value as a string (`--def` only, repeatable). Like `--set` but never type-coerced — the CLI equivalent of quoting a value in `rpack.yaml`, so shapes like `08`, `3.10`, `true` stay strings. |
 | `--set-input name=path` | | Map an input name to a local file or directory (`--def` only, repeatable). |
 | `--output-dir` | `-o` | Write output files to this directory. Creates `meta.json` alongside. Mutually exclusive with `--dry-run`. |
 | `--dry-run` | `-n` | Preview changes. In `--def` mode, prints each file's path and content to stdout. |

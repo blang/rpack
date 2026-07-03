@@ -2,7 +2,12 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
+
+	"sigs.k8s.io/yaml"
+
+	"github.com/blang/rpack/pkg/rpack"
 )
 
 func TestParseSetFlags(t *testing.T) {
@@ -18,6 +23,15 @@ func TestParseSetFlags(t *testing.T) {
 		{name: "bool true", flags: []string{"enabled=true"}, want: `{"enabled":true}`},
 		{name: "bool false", flags: []string{"enabled=false"}, want: `{"enabled":false}`},
 		{name: "float", flags: []string{"ratio=2.5"}, want: `{"ratio":2.5}`},
+		// YAML scalar resolution (parity with rpack.yaml file)
+		{name: "float version", flags: []string{"version=3.10"}, want: `{"version":3.1}`},
+		{name: "leading zero", flags: []string{"count=08"}, want: `{"count":8}`},
+		{name: "exponential", flags: []string{"n=1e5"}, want: `{"n":100000}`},
+		{name: "float int shape", flags: []string{"x=1.0"}, want: `{"x":1}`},
+		{name: "bool upper", flags: []string{"enabled=TRUE"}, want: `{"enabled":true}`},
+		{name: "negative number", flags: []string{"x=-5"}, want: `{"x":-5}`},
+		{name: "yaml null", flags: []string{"x=null"}, want: `{"x":null}`},
+		{name: "empty value is null", flags: []string{"x="}, want: `{"x":null}`},
 
 		// Nested
 		{name: "nested", flags: []string{"nested.key=value"}, want: `{"nested":{"key":"value"}}`},
@@ -45,6 +59,7 @@ func TestParseSetFlags(t *testing.T) {
 		{name: "no equals", flags: []string{"bad"}, wantErr: true},
 		{name: "root array", flags: []string{"0=bad"}, wantErr: true},
 		{name: "mix scalar+index", flags: []string{"list.key=val", "list.0=zero"}, wantErr: true},
+		{name: "yaml unresolvable", flags: []string{"x=.inf"}, wantErr: true},
 	}
 
 	for _, tc := range tcs {
@@ -120,5 +135,130 @@ func TestSetNestedValue_NestedIndex(t *testing.T) {
 	}
 	if h0["name"] != "trailing-whitespace" {
 		t.Errorf("hooks[0].name = %v", h0["name"])
+	}
+}
+
+// TestParseSetStringFlags verifies --set-string keeps every value verbatim as
+// a string, regardless of a shape that --set would coerce (08, 3.10, true).
+// This is the CLI equivalent of quoting a value in an rpack.yaml file.
+func TestParseSetStringFlags(t *testing.T) {
+	tcs := []struct { //nolint:govet // fieldalignment is not critical in table-driven tests
+		name    string
+		flags   []string
+		want    string
+		wantErr bool
+	}{
+		{name: "int as string", flags: []string{"count=42"}, want: `{"count":"42"}`},
+		{name: "float as string", flags: []string{"version=3.10"}, want: `{"version":"3.10"}`},
+		{name: "bool as string", flags: []string{"enabled=true"}, want: `{"enabled":"true"}`},
+		{name: "leading zero kept", flags: []string{"count=08"}, want: `{"count":"08"}`},
+		{name: "exponential kept", flags: []string{"n=1e5"}, want: `{"n":"1e5"}`},
+		{name: "empty string", flags: []string{"x="}, want: `{"x":""}`},
+		{name: "string value", flags: []string{"name=Alice"}, want: `{"name":"Alice"}`},
+		{name: "nested", flags: []string{"a.b=42"}, want: `{"a":{"b":"42"}}`},
+
+		// Duplicate keys -> list of strings (same model as --set).
+		{name: "two dups", flags: []string{"list=a", "list=08"}, want: `{"list":["a","08"]}`},
+
+		// Errors
+		{name: "no equals", flags: []string{"bad"}, wantErr: true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseSetStringFlags(tc.flags)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			gotJSON, _ := json.Marshal(got)
+			if string(gotJSON) != tc.want {
+				t.Errorf("got  %s\nwant %s", gotJSON, tc.want)
+			}
+		})
+	}
+}
+
+// TestSetStringOverridesSet verifies --set-string is applied on top of --set
+// using the same key model. A key set by both follows the duplicate-key -> list
+// rule (not last-wins), matching how two --set on one key behave.
+func TestSetStringOverridesSet(t *testing.T) {
+	// Build the --set result, then apply --set-string into it.
+	values, err := parseSetFlags([]string{"port=8080"})
+	if err != nil {
+		t.Fatalf("parseSetFlags: %v", err)
+	}
+	err = applySetStringValues(values, []string{"port=8080"})
+	if err != nil {
+		t.Fatalf("applySetStringValues: %v", err)
+	}
+	got, _ := json.Marshal(values)
+	// First entry is a number (from --set, YAML-resolved), second a string
+	// (from --set-string, verbatim) — duplicate key becomes a list.
+	want := `{"port":[8080,"8080"]}`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+
+	// set-string on a fresh key forces a string even for numeric shapes.
+	values2, err := parseSetFlags(nil)
+	if err != nil {
+		t.Fatalf("parseSetFlags empty: %v", err)
+	}
+	err = applySetStringValues(values2, []string{"version=3.10"})
+	if err != nil {
+		t.Fatalf("applySetStringValues: %v", err)
+	}
+	got2, _ := json.Marshal(values2)
+	if string(got2) != `{"version":"3.10"}` {
+		t.Errorf("set-string not preserved as string: got %s", got2)
+	}
+}
+
+// TestSetValueParityWithConfigFile is the load-bearing guard for the --set
+// design: a value passed via --set must resolve to the identical typed value
+// it would have in an rpack.yaml file. The file path uses sigs.k8s.io/yaml
+// (configloader.go), and --set now uses the same resolver, so both produce
+// float64 for every number. Were --set to drift back to bespoke int/float
+// coercion (e.g. int 8080 vs file float64 8080), this test fails.
+func TestSetValueParityWithConfigFile(t *testing.T) {
+	// Mirrors how configloader.loadRPackFile resolves a config's values.
+	const yamlDoc = `"@schema_version": "v1"
+config:
+  values:
+    count: 42
+    version: 3.10
+    enabled: true
+    name: Alice
+`
+	var cfg rpack.RPackConfig
+	if err := yaml.Unmarshal([]byte(yamlDoc), &cfg); err != nil {
+		t.Fatalf("file-path unmarshal: %v", err)
+	}
+	fileValues := cfg.Config.Values
+
+	setValues, err := parseSetFlags([]string{
+		"count=42", "version=3.10", "enabled=true", "name=Alice",
+	})
+	if err != nil {
+		t.Fatalf("parseSetFlags: %v", err)
+	}
+
+	if len(fileValues) != len(setValues) {
+		t.Fatalf("key count mismatch: file=%v set=%v", fileValues, setValues)
+	}
+	for k, fv := range fileValues {
+		sv, ok := setValues[k]
+		if !ok {
+			t.Errorf("key %q missing from --set result", k)
+			continue
+		}
+		if fmt.Sprintf("%T:%v", fv, fv) != fmt.Sprintf("%T:%v", sv, sv) {
+			t.Errorf("key %q diverges: file=%T(%v) set=%T(%v)", k, fv, fv, sv, sv)
+		}
 	}
 }

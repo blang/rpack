@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"sigs.k8s.io/yaml"
 
 	"github.com/blang/rpack/pkg/rpack"
 )
@@ -23,7 +24,13 @@ With a config file:
   rpack run ./app.rpack.yaml
 
 With a local definition directory (--def mode):
-  rpack run --def ./my-rpack --set author=test --dry-run`,
+  rpack run --def ./my-rpack --set author=test --dry-run
+
+--set resolves each value with the same YAML rules as an rpack.yaml file
+(count=42 -> number, ratio=2.5 -> number, enabled=true -> bool, name=foo ->
+string). To force a value to stay a string regardless of its shape (e.g.
+08, 3.10, true), use --set-string key=value: it is the CLI equivalent of
+quoting a value in the YAML file and is never type-coerced.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		defDir, err := cmd.Flags().GetString("def")
 		if err != nil {
@@ -46,6 +53,17 @@ With a local definition directory (--def mode):
 		}
 		if len(setFlags) > 0 && defDir == "" {
 			return fmt.Errorf("--set requires --def")
+		}
+
+		// Parse --set-string flags (only valid with --def). Same shape as --set,
+		// but values are kept verbatim as strings — the CLI equivalent of quoting
+		// a value in an rpack.yaml file.
+		setStringFlags, err := cmd.Flags().GetStringSlice("set-string")
+		if err != nil {
+			return err
+		}
+		if len(setStringFlags) > 0 && defDir == "" {
+			return fmt.Errorf("--set-string requires --def")
 		}
 
 		// Parse --set-input flags (only valid with --def)
@@ -98,6 +116,13 @@ With a local definition directory (--def mode):
 				return fmt.Errorf("invalid --set flag: %w", err)
 			}
 
+			// --set-string applies on top of --set using the same key model
+			// (dot-notation, index, duplicate->list). Values stay strings.
+			err = applySetStringValues(values, setStringFlags)
+			if err != nil {
+				return fmt.Errorf("invalid --set-string flag: %w", err)
+			}
+
 			inputs, err := parseSetInputFlags(setInputFlags)
 			if err != nil {
 				return fmt.Errorf("invalid --set-input flag: %w", err)
@@ -120,6 +145,7 @@ func init() {
 	// Run-specific flags (new --def mode)
 	runCmd.Flags().StringP("def", "d", "", "Use local definition directory (mutually exclusive with config file)")
 	runCmd.Flags().StringSliceP("set", "", nil, "Set a config value (key=value, repeatable)")
+	runCmd.Flags().StringSliceP("set-string", "", nil, "Set a config value as a string (key=value, repeatable). Like --set but never type-coerced — the CLI equivalent of quoting a value in rpack.yaml")
 	runCmd.Flags().StringSliceP("set-input", "", nil, "Map an input name to a local file (name=path, repeatable)")
 	runCmd.Flags().StringP("output-dir", "o", "", "Write output files to this directory")
 
@@ -130,13 +156,16 @@ func init() {
 }
 
 // parseSetFlags parses --set key=value flags into a map[string]any.
-// Supports type coercion (int, bool, float, string), dot-notation nesting,
-// and array indexing.
+// Each value is resolved as a YAML scalar with the same rules an rpack.yaml
+// file uses (sigs.k8s.io/yaml), so --set count=42 and `count: 42` in the file
+// produce the identical typed value. Dot-notation nesting, array indexing,
+// and the duplicate-key/array semantics below apply on top of that.
 //
 // Array semantics: a key that appears multiple times produces a list.
-// A single occurrence produces a scalar (string/int/bool/float).
+// A single occurrence produces a scalar (string/number/bool).
 // Index notation (key.0, key.1) always produces a list.
 // Mixing index and duplicate-key on the same key is an error.
+// Use --set-string (applySetStringValues) to force a string value.
 func parseSetFlags(raw []string) (map[string]any, error) {
 	result := make(map[string]any)
 
@@ -146,7 +175,10 @@ func parseSetFlags(raw []string) (map[string]any, error) {
 			return nil, fmt.Errorf("invalid format %q, expected key=value", rawFlag)
 		}
 
-		parsed := coerceValue(value)
+		parsed, err := parseYAMLValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for key %q: %w", key, err)
+		}
 		if err := setNestedValue(result, key, parsed); err != nil {
 			return nil, err
 		}
@@ -170,21 +202,48 @@ func parseSetInputFlags(raw []string) (map[string]string, error) {
 	return result, nil
 }
 
-// coerceValue auto-detects the type of a string value.
-func coerceValue(s string) any {
-	if s == "true" {
-		return true
+// parseYAMLValue resolves a single --set value using the same YAML resolver
+// the rpack.yaml file path uses (sigs.k8s.io/yaml, via configloader.go).
+// Keeping --set on YAML resolution makes it byte-for-byte consistent with the
+// config file: 42 -> number, 3.10 -> 3.1, true/false -> bool, 08 -> 8, and
+// bare strings stay strings. An unresolvable scalar (e.g. ".inf") surfaces as
+// an error, exactly as it would when loading an rpack.yaml file.
+func parseYAMLValue(s string) (any, error) {
+	var v any
+	if err := yaml.Unmarshal([]byte(s), &v); err != nil {
+		return nil, err
 	}
-	if s == "false" {
-		return false
+	return v, nil
+}
+
+// applySetStringValues applies --set-string flags into an existing values map.
+// Values are kept verbatim as strings — the CLI equivalent of quoting a value
+// in an rpack.yaml file — so shapes that YAML would otherwise coerce (08,
+// 3.10, true) stay strings. The same dot-notation / index / duplicate->list
+// model as --set applies; --set-string is applied after --set, so a key set by
+// both follows the same duplicate-key -> list rule as two --set on one key.
+func applySetStringValues(result map[string]any, raw []string) error {
+	for _, rawFlag := range raw {
+		key, value, ok := strings.Cut(rawFlag, "=")
+		if !ok {
+			return fmt.Errorf("invalid format %q, expected key=value", rawFlag)
+		}
+		if err := setNestedValue(result, key, value); err != nil {
+			return err
+		}
 	}
-	if i, err := strconv.Atoi(s); err == nil {
-		return i
+	return nil
+}
+
+// parseSetStringFlags is the stand-alone entry point for --set-string; it
+// mirrors parseSetFlags but never coerces values. Used by tests; the command
+// path reuses applySetStringValues on the already-built --set result map.
+func parseSetStringFlags(raw []string) (map[string]any, error) {
+	result := make(map[string]any)
+	if err := applySetStringValues(result, raw); err != nil {
+		return nil, err
 	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f
-	}
-	return s
+	return result, nil
 }
 
 // setNestedValue sets a value in a nested map, supporting dot-notation

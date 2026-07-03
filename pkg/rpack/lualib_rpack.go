@@ -150,12 +150,12 @@ func luaFromYAML(L *lua.LState) int {
 func luaToYAML(L *lua.LState) int {
 	val := L.CheckTable(1)
 	goVal := luaTableToGo(val)
-	jsonBytes, err := json.MarshalIndent(goVal, "", "  ")
+	yamlBytes, err := yaml.Marshal(goVal)
 	if err != nil {
 		L.ArgError(1, fmt.Errorf("failed to marshal YAML: %w", err).Error())
 		return 0
 	}
-	L.Push(lua.LString(string(jsonBytes)))
+	L.Push(lua.LString(string(yamlBytes)))
 	return 1
 }
 

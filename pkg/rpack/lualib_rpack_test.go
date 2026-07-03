@@ -114,32 +114,50 @@ func TestRPackAPIToAndFromYAML(t *testing.T) {
 	L.SetGlobal("from_yaml", L.NewFunction(luaFromYAML))
 	L.SetGlobal("to_yaml", L.NewFunction(luaToYAML))
 	script := `
-		local t = {
-			string = "val",
-			int = 123,
-			strlist = {"a", "b"},
-		}
-		local ystr = to_yaml(t)
-		local got = from_yaml(ystr)
-		assert(got.string == "val")
-		assert(got.int == 123)
 		local function arrayEqual(a1, a2)
-			-- Check length, or else the loop isn't valid.
 			if #a1 ~= #a2 then
-			  return false
-			end
-
-			-- Check each element.
-			for i, v in ipairs(a1) do
-			  if v ~= a2[i] then
 				return false
-			  end
 			end
-
-			-- We've checked everything.
+			for i, v in ipairs(a1) do
+				if v ~= a2[i] then
+					return false
+				end
+			end
 			return true
 		end
-		assert(arrayEqual(got.strlist, t.strlist))
+
+		-- to_yaml must produce YAML, not indented JSON. A JSON object/array
+		-- literal starts with '{' or '['; YAML maps/sequences do not. This
+		-- assertion would have failed against the old json.MarshalIndent impl.
+		local cases = {
+			{ name = "simple map", input = { string = "val", int = 123, strlist = {"a", "b"} } },
+			{ name = "nested",     input = { outer = { inner = "deep", n = 7 } } },
+			{ name = "array root", input = { items = {"x", "y", "z"} } },
+			{ name = "bool/null",  input = { flag = true, empty = nil } },
+		}
+		for _, c in ipairs(cases) do
+			local ystr = to_yaml(c.input)
+			assert(type(ystr) == "string", c.name .. ": to_yaml returned non-string")
+			assert(ystr:sub(1, 1) ~= "{", c.name .. ": to_yaml produced JSON object literal")
+			assert(ystr:sub(1, 1) ~= "[", c.name .. ": to_yaml produced JSON array literal")
+			local got = from_yaml(ystr)
+			assert(got.string == c.input.string or got.string == nil, c.name .. ": string round-trip")
+			if c.input.int ~= nil then
+				assert(got.int == c.input.int, c.name .. ": int round-trip (got " .. tostring(got.int) .. ")")
+			end
+			if c.input.strlist ~= nil then
+				assert(arrayEqual(got.strlist, c.input.strlist), c.name .. ": strlist round-trip")
+			end
+			if c.input.outer ~= nil then
+				assert(got.outer.inner == c.input.outer.inner, c.name .. ": nested inner round-trip")
+			end
+			if c.input.items ~= nil then
+				assert(arrayEqual(got.items, c.input.items), c.name .. ": items round-trip")
+			end
+			if c.input.flag ~= nil then
+				assert(got.flag == c.input.flag, c.name .. ": bool round-trip")
+			end
+		end
 	`
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)

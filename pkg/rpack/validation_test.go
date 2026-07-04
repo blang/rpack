@@ -92,6 +92,16 @@ func TestValidateRPackDef(t *testing.T) {
 			},
 		},
 		{
+			name:    "unparseable schema.cue surfaces compile error",
+			wantErr: true,
+			errMsg:  "compiling CUE schema: expected '}'",
+			files: map[string]string{
+				"rpack.yaml": "\"@schema_version\": \"v1\"\nname: \"mypack\"\n",
+				"script.lua": "print(\"hello\")",
+				"schema.cue": "#Schema: { field: string\n",
+			},
+		},
+		{
 			name:    "unparseable schema.cue",
 			wantErr: true,
 			errMsg:  "validation context",
@@ -120,5 +130,65 @@ func TestValidateRPackDef(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// TestNewCueValidator_CompileError verifies that an unparseable schema surfaces
+// the actual compiler error pointing at the offending line, rather than the
+// opaque "#Schema does not exist" fallback.
+func TestNewCueValidator_CompileError(t *testing.T) {
+	// Missing closing brace -> compiler error.
+	_, err := NewCueValidator([]byte("#Schema: { field: string\n"), "#Schema")
+	if err == nil {
+		t.Fatalf("expected a compile error, got nil")
+	}
+	if !strings.Contains(err.Error(), "compiling CUE schema") {
+		t.Errorf("error should mention compiling CUE schema, got: %v", err)
+	}
+	// The actual compiler message should survive (it points at the problem).
+	if !strings.Contains(err.Error(), "expected '}'") {
+		t.Errorf("error should contain the compiler message, got: %v", err)
+	}
+}
+
+// TestNewCueValidator_MissingPath verifies the path-not-found fallback now reads
+// clearly and does not lose the path name.
+func TestNewCueValidator_MissingPath(t *testing.T) {
+	_, err := NewCueValidator([]byte("#SomethingElse: { field: string }\n"), "#Schema")
+	if err == nil {
+		t.Fatalf("expected an error for missing path, got nil")
+	}
+	if !strings.Contains(err.Error(), "#Schema") || !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error should name the missing path, got: %v", err)
+	}
+}
+
+// TestCueValidator_ValidateHumanMessage verifies a validation failure renders
+// a human-readable message: the internal "#Schema." root is stripped and the
+// location is prefixed with "rpack.yaml:".
+func TestCueValidator_ValidateHumanMessage(t *testing.T) {
+	schema := []byte("#Schema: { field!: string }\n")
+	v, err := NewCueValidator(schema, "#Schema")
+	if err != nil {
+		t.Fatalf("NewCueValidator: %v", err)
+	}
+	err = v.Validate(struct {
+		Field int `json:"field"`
+	}{Field: 42})
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "rpack.yaml: ") {
+		t.Errorf("message should be prefixed with \"rpack.yaml: \", got: %q", msg)
+	}
+	if strings.Contains(msg, "#Schema.") || strings.Contains(msg, "#Schema field") {
+		t.Errorf("internal CUE root path should be stripped, got: %q", msg)
+	}
+	if !strings.Contains(msg, "field") {
+		t.Errorf("message should reference the failing field, got: %q", msg)
+	}
+	if !strings.Contains(msg, "string") || !strings.Contains(msg, "int") {
+		t.Errorf("message should mention both expected and actual types, got: %q", msg)
 	}
 }

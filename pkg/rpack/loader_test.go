@@ -176,3 +176,24 @@ func TestResolveRPackInputs(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadRPackFile_ConfigLessDoesNotPanic guards the nil-deref fixed in
+// loadRPackFile: a schema-valid rpack.yaml that omits the optional `config:`
+// block must leave Config as a non-nil empty struct, not panic on later
+// dereference of ci.Config.Config.Inputs in LoadRPack.
+func TestLoadRPackFile_ConfigLessDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.rpack.yaml")
+	if err := os.WriteFile(path, []byte("\"@schema_version\": \"v1\"\nsource: \"./rpackdef\"\n"), 0o600); err != nil { //nolint:gosec // test fixture
+		t.Fatalf("write: %v", err)
+	}
+	c, err := loadRPackFile(path)
+	if err != nil {
+		t.Fatalf("loadRPackFile: %v", err)
+	}
+	if c.Config == nil {
+		t.Fatal("Config must be non-nil even when `config:` is omitted")
+	}
+	// Dereference Inputs exactly as LoadRPack does — must not panic.
+	_ = c.Config.Inputs
+}

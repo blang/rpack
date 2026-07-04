@@ -85,6 +85,9 @@ func loadRPackFile(name string) (*RPackConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal yaml in file: %s: %w", name, err)
 	}
+	if c.Config == nil {
+		c.Config = &RPackConfigConfig{}
+	}
 	return &c, nil
 }
 

@@ -245,6 +245,27 @@ func TestEnsurePureCheckConflicts(t *testing.T) {
 			errorMsg:    "readDir on map:configs and write on same directory configs/new.yaml not allowed",
 		},
 		{
+			name: "readdir/write in nested subdirectory returns error",
+			pure: &EnsurePure{
+				ReadDirHandles: []FSHandle{
+					&mockFSHandle{
+						resolver:           MapResolver,
+						friendlyPath:       "map:mydir",
+						indirectTargetPath: "mydir",
+					},
+				},
+				WriteHandles: []FSHandle{
+					&mockFSHandle{
+						resolver:           TargetResolver,
+						friendlyPath:       "mydir/sub/x.txt",
+						indirectTargetPath: "mydir/sub/x.txt",
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "readDir on map:mydir and write on same directory mydir/sub/x.txt not allowed",
+		},
+		{
 			name: "read/write different paths returns nil",
 			pure: &EnsurePure{
 				ReadHandles: []FSHandle{
@@ -278,6 +299,25 @@ func TestEnsurePureCheckConflicts(t *testing.T) {
 						resolver:           TargetResolver,
 						friendlyPath:       "outputs/result.yaml",
 						indirectTargetPath: "outputs/result.yaml",
+					},
+				},
+			},
+		},
+		{
+			name: "readdir/write in sibling directory with shared name prefix returns nil",
+			pure: &EnsurePure{
+				ReadDirHandles: []FSHandle{
+					&mockFSHandle{
+						resolver:           MapResolver,
+						friendlyPath:       "map:configs",
+						indirectTargetPath: "configs",
+					},
+				},
+				WriteHandles: []FSHandle{
+					&mockFSHandle{
+						resolver:           TargetResolver,
+						friendlyPath:       "configs-backup/result.yaml",
+						indirectTargetPath: "configs-backup/result.yaml",
 					},
 				},
 			},

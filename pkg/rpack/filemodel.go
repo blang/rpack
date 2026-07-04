@@ -638,14 +638,16 @@ func (f *EnsurePure) CheckConflicts() error {
 		}
 	}
 
-	// Check readdir against writes
+	// Check readdir against writes. A readdir exposes a directory's contents
+	// (transitively, since ReadDirAll re-enqueues subdirs), so any write whose
+	// path lands inside the read directory — including nested subdirectories —
+	// breaks idempotency. filepath.Match with "*" does not cross separators and
+	// would miss nested writes; use an explicit path-prefix check instead.
 	for _, rdh := range f.ReadDirHandles {
-		readDirPath := rdh.IndirectTargetPath()
+		readDirPath := filepath.Clean(rdh.IndirectTargetPath())
 		for _, wh := range f.WriteHandles {
-			writePath := wh.IndirectTargetPath()
-			if match, err := filepath.Match(filepath.Join(readDirPath, "*"), writePath); err != nil {
-				return fmt.Errorf("readDir on %s error for pure-check against %s: %w", rdh.FriendlyPath(), wh.FriendlyPath(), err)
-			} else if match {
+			writePath := filepath.Clean(wh.IndirectTargetPath())
+			if writePath == readDirPath || strings.HasPrefix(writePath, readDirPath+string(filepath.Separator)) {
 				return fmt.Errorf("readDir on %s and write on same directory %s not allowed", rdh.FriendlyPath(), wh.FriendlyPath())
 			}
 		}

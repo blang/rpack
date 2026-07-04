@@ -106,7 +106,7 @@ const (
 )
 
 // LoadRPack loads all required data of a RPack to be executed.
-func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error) {
+func LoadRPack(ctx context.Context, ci *RPackConfigInstance, execPath string) (*RPackInstance, error) {
 	// Setup cache path
 	packCachePath := filepath.Join(execPath, RPackCacheDir, util.Sha256String(ci.Config.Source))
 	err := os.MkdirAll(packCachePath, 0o755) //nolint:gosec // intentional: standard directory permissions
@@ -160,7 +160,7 @@ func LoadRPack(ci *RPackConfigInstance, execPath string) (*RPackInstance, error)
 	slog.Debug("Load RPackDef", "source", packSourcePath, "dest", ci.Config.Source)
 	// Load RPackDef into source folder
 	fetcher := getsource.DefaultFetcher()
-	err = fetcher.Fetch(context.Background(), packSourcePath, packageAddr)
+	err = fetcher.Fetch(ctx, packSourcePath, packageAddr)
 	if err != nil {
 		return nil, fmt.Errorf("could not get source %q: %w", ci.Config.Source, err)
 	}

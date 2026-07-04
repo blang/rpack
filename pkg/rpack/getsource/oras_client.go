@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	ociDigest "github.com/opencontainers/go-digest"
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -17,6 +19,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
 // ORASStore is a real OCI registry client using oras-go/v2 remote.
@@ -38,13 +41,35 @@ func NewORASStore(registryDomain, repositoryName string) (*ORASStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating remote repository: %w", err)
 	}
-
 	store := newCredentialStore()
 
 	repo.Client = &auth.Client{
+		Client: &http.Client{
+			// Wrap the base transport with ORAS's retry policy: bounded
+			// exponential backoff with jitter, retrying 408/429/5xx and
+			// net.Error timeouts (DefaultPredicate / DefaultPolicy).
+			Transport: retry.NewTransport(newOCIHTTPTransport()),
+		},
 		Credential: credentials.Credential(store),
 	}
 	return &ORASStore{repo: repo}, nil
+}
+
+// newOCIHTTPTransport returns a base HTTP transport with sensible timeouts for
+// OCI registry interactions. It is wrapped by retry.NewTransport in NewORASStore
+// to add bounded jittered backoff for transient failures.
+func newOCIHTTPTransport() *http.Transport {
+	// http.DefaultTransport is an *http.Transport with a working default
+	// config; clone it so we only override the timeout-sensitive fields.
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || t == nil {
+		t = &http.Transport{}
+	}
+	tr := t.Clone()
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.ExpectContinueTimeout = 1 * time.Second
+	tr.ResponseHeaderTimeout = 30 * time.Second
+	return tr
 }
 
 // newCredentialStore creates a credential store reading from all standard

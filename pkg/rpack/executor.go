@@ -425,7 +425,7 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	if e.OverrideExecPath != "" {
 		execPath = e.OverrideExecPath
 	}
-	pi, loadErr := LoadRPack(ci, execPath)
+	pi, loadErr := LoadRPack(ctx, ci, execPath)
 	if loadErr != nil {
 		return fmt.Errorf("could not load rpack: %s: %w", name, loadErr)
 	}

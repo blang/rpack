@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	getter "github.com/hashicorp/go-getter"
 	ociDigest "github.com/opencontainers/go-digest"
@@ -23,6 +24,21 @@ const OCIArtifactType = "application/vnd.rpack.modulepkg"
 // ociManifestSizeLimitMiB is the maximum size of an OCI manifest we'll accept.
 // This matches the OCI Distribution v1.1 spec recommended repository limit.
 const ociManifestSizeLimitMiB = 4
+
+// Per-operation deadlines for OCI network calls. The ORAS retry transport
+// (configured in oras_client.go) handles transient-failure retries with
+// bounded jittered backoff; these timeouts cap the total time per operation
+// (including retries) so a stalled registry cannot hang rpack indefinitely.
+// They are overridden by any earlier deadline already present on the context.
+const (
+	// ociResolveTimeout caps a single tag/digest resolution request.
+	ociResolveTimeout = 30 * time.Second
+	// ociManifestTimeout caps a single manifest fetch (manifests are bounded
+	// to ociManifestSizeLimitMiB, so this is generous).
+	ociManifestTimeout = 30 * time.Second
+	// ociBlobFetchTimeout caps a single module-package blob download.
+	ociBlobFetchTimeout = 10 * time.Minute
+)
 
 // OCIRepositoryStore is the interface for interacting with a single OCI
 // Distribution repository. Implementations handle authentication and
@@ -138,6 +154,8 @@ func (g *ociDistributionGetter) resolveRepositoryRef(u *url.URL) (*orasRegistry.
 // resolveManifestDescriptor resolves the manifest descriptor from the OCI registry,
 // either by tag or by digest, using the query parameters from the source URL.
 func (g *ociDistributionGetter) resolveManifestDescriptor(ctx context.Context, ref *orasRegistry.Reference, query url.Values, store OCIRepositoryStore) (ociv1.Descriptor, error) {
+	ctx, cancel := context.WithTimeout(ctx, ociResolveTimeout)
+	defer cancel()
 	wantTag, wantDigest, err := parseOCIQuery(ref, query)
 	if err != nil {
 		return ociv1.Descriptor{}, err
@@ -219,6 +237,8 @@ func parseOCIQuery(ref *orasRegistry.Reference, query url.Values) (wantTag strin
 //
 //nolint:gocritic // desc is OCI standard type passed by value
 func (g *ociDistributionGetter) fetchOCIManifest(ctx context.Context, desc ociv1.Descriptor, store OCIRepositoryStore) (*ociv1.Manifest, error) {
+	ctx, cancel := context.WithTimeout(ctx, ociManifestTimeout)
+	defer cancel()
 	if (desc.Size / 1024 / 1024) > ociManifestSizeLimitMiB {
 		return nil, fmt.Errorf("manifest size exceeds RPack's limit of %d MiB", ociManifestSizeLimitMiB)
 	}
@@ -290,6 +310,8 @@ func selectOCILayer(descs []ociv1.Descriptor) (ociv1.Descriptor, error) {
 //
 //nolint:gocritic // desc is OCI standard type passed by value
 func (g *ociDistributionGetter) fetchOCIBlobToTempFile(ctx context.Context, desc ociv1.Descriptor, store orasContent.Fetcher) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, ociBlobFetchTimeout)
+	defer cancel()
 	f, err := os.CreateTemp("", "rpack-module")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary file: %w", err)

@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	getter "github.com/hashicorp/go-getter"
 	ociDigest "github.com/opencontainers/go-digest"
@@ -323,3 +325,70 @@ func (s *digestResolvingInMemoryOCIStore) Fetch(ctx context.Context, target ociv
 }
 
 var _ OCIRepositoryStore = (*digestResolvingInMemoryOCIStore)(nil)
+
+// stallingOCIStore blocks on the supplied context for every operation, then
+// returns ctx.Err(). It is used to verify that Get respects an outer deadline
+// / cancellation rather than hanging indefinitely.
+type stallingOCIStore struct{}
+
+func (stallingOCIStore) Resolve(ctx context.Context, _ string) (ociv1.Descriptor, error) {
+	<-ctx.Done()
+	return ociv1.Descriptor{}, ctx.Err()
+}
+
+//nolint:gocritic // target is OCI standard type passed by value
+func (stallingOCIStore) Fetch(ctx context.Context, _ ociv1.Descriptor) (io.ReadCloser, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+var _ OCIRepositoryStore = stallingOCIStore{}
+
+// TestOCIDistributionGetter_ContextCancellation verifies that a stalled OCI
+// registry does not hang rpack: an outer context deadline propagates through
+// resolveManifestDescriptor's per-operation deadline and surfaces as
+// context.DeadlineExceeded.
+func TestOCIDistributionGetter_ContextCancellation(t *testing.T) {
+	g := &ociDistributionGetter{
+		getOCIRepositoryStore: func(context.Context, string, string) (OCIRepositoryStore, error) {
+			return stallingOCIStore{}, nil
+		},
+		client: &getter.Client{
+			// 50ms deadline: shorter than ociResolveTimeout (30s) so the test
+			// exercises the parent-deadline-wins path of withOCIDeadline.
+			Ctx: func() context.Context {
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				t.Cleanup(cancel)
+				return ctx
+			}(),
+		},
+	}
+
+	u, err := parseOCIURL("oci://example.com/test/module?tag=latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g.Get(t.TempDir(), u)
+	if err == nil {
+		t.Fatal("expected error from stalled registry, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
+	}
+}
+
+// TestNewOCIHTTPTransport verifies the base transport carries timeout fields
+// that the retry transport wraps. Guards against a nil-deref or zero-value
+// regression in NewORASStore's transport wiring.
+func TestNewOCIHTTPTransport(t *testing.T) {
+	tr := newOCIHTTPTransport()
+	if tr == nil {
+		t.Fatal("expected non-nil transport")
+	}
+	if tr.TLSHandshakeTimeout <= 0 {
+		t.Errorf("TLSHandshakeTimeout not set: %v", tr.TLSHandshakeTimeout)
+	}
+	if tr.ResponseHeaderTimeout <= 0 {
+		t.Errorf("ResponseHeaderTimeout not set: %v", tr.ResponseHeaderTimeout)
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 
 	"log/slog"
@@ -276,6 +275,11 @@ func goToLValue(L *lua.LState, val any) lua.LValue {
 }
 
 // luaTableToGo converts a Lua table into a Go native type.
+//
+// A table with only integer keys (1..n) becomes a []any (array). A table with
+// any non-integer key becomes a map[string]any; numeric keys are preserved as
+// their stringified form (e.g. key 1 -> "1"), so mixed-key tables lose no
+// entries. The array-vs-map decision is made on key types, not on contiguity.
 func luaTableToGo(tbl *lua.LTable) any {
 	var arr []any
 	isArray := true
@@ -297,16 +301,25 @@ func luaTableToGo(tbl *lua.LTable) any {
 }
 
 // lValueToGo converts a Lua value into a Go native type.
+//
+// Type rules:
+//   - LString stays a string. A previous strconv.Atoi guess silently retyped
+//     numeric-looking strings ("007" -> 7), corrupting path-like strings and
+//     zero-padded IDs handed to template/jq/to_json.
+//   - LNumber is emitted as int when its value is whole (matching author intent
+//     for IDs, ports, counts), and as float64 otherwise.
+//   - LTable is fed through luaTableToGo (see below).
 func lValueToGo(val lua.LValue) any {
 	switch v := val.(type) {
 	case lua.LBool:
 		return bool(v)
 	case lua.LNumber:
-		return float64(v)
-	case lua.LString:
-		if i, err := strconv.Atoi(string(v)); err == nil {
+		f := float64(v)
+		if i := int64(f); f == float64(i) {
 			return i
 		}
+		return f
+	case lua.LString:
 		return string(v)
 	case *lua.LTable:
 		return luaTableToGo(v)

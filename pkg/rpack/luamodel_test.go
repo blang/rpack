@@ -3,7 +3,10 @@ package rpack
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
+
+	lua "github.com/yuin/gopher-lua"
 
 	"sigs.k8s.io/yaml"
 )
@@ -199,5 +202,114 @@ func TestLuaSandbox(t *testing.T) {
 	err := ExecuteLuaWithData(t.Context(), script, fs, nil)
 	if err != nil {
 		t.Fatalf("ExecuteLua error: %s", err)
+	}
+}
+
+func TestLValueToGo(t *testing.T) {
+	tests := []struct {
+		name string
+		in   lua.LValue
+		want any
+	}{
+		// Strings stay strings: a previous strconv.Atoi guess retyped numeric
+		// strings into ints, corrupting zero-padded IDs and path-like strings.
+		{name: "numeric string 007 stays string", in: lua.LString("007"), want: "007"},
+		{name: "plain string stays string", in: lua.LString("hello"), want: "hello"},
+		{name: "leading-zero port stays string", in: lua.LString("08080"), want: "08080"},
+		// Whole Lua numbers become int (author intent for IDs, ports, counts);
+		// fractional numbers stay float64.
+		{name: "whole number becomes int64", in: lua.LNumber(7), want: int64(7)},
+		{name: "port becomes int64", in: lua.LNumber(8080), want: int64(8080)},
+		{name: "zero becomes int64", in: lua.LNumber(0), want: int64(0)},
+		{name: "fractional stays float64", in: lua.LNumber(7.5), want: float64(7.5)},
+		{name: "negative whole becomes int64", in: lua.LNumber(-5), want: int64(-5)},
+		// Bools and nil pass through.
+		{name: "bool true", in: lua.LBool(true), want: true},
+		{name: "bool false", in: lua.LBool(false), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := lValueToGo(tt.in)
+			if reflect.TypeOf(got) != reflect.TypeOf(tt.want) {
+				t.Fatalf("type mismatch: want %T, got %T (%v)", tt.want, got, got)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("value mismatch: want %#v, got %#v", tt.want, got)
+			}
+		})
+	}
+}
+
+// TestLValueToGo_WholeNumberJSON verifies whole Lua numbers marshal as bare
+// integers (no fractional noise) in JSON after conversion.
+func TestLValueToGo_WholeNumberJSON(t *testing.T) {
+	v := lValueToGo(lua.LNumber(42))
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %s", err)
+	}
+	if string(b) != "42" {
+		t.Fatalf("expected \"42\", got %q", string(b))
+	}
+}
+
+func TestLuaTableToGo(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	mkArr := func() *lua.LTable {
+		tbl := L.NewTable()
+		tbl.RawSetInt(1, lua.LString("a"))
+		tbl.RawSetInt(2, lua.LString("b"))
+		return tbl
+	}
+	mkMixed := func() *lua.LTable {
+		tbl := L.NewTable()
+		tbl.RawSetInt(1, lua.LString("a"))
+		tbl.RawSetInt(2, lua.LString("b"))
+		tbl.RawSetString("name", lua.LString("x"))
+		return tbl
+	}
+	mkMap := func() *lua.LTable {
+		tbl := L.NewTable()
+		tbl.RawSetString("name", lua.LString("x"))
+		return tbl
+	}
+
+	tests := []struct {
+		name    string
+		in      *lua.LTable
+		want    any
+		wantErr bool
+	}{
+		{
+			name: "array table becomes slice",
+			in:   mkArr(),
+			want: []any{"a", "b"},
+		},
+		{
+			name: "mixed table merges numeric keys as strings",
+			in:   mkMixed(),
+			want: map[string]any{"1": "a", "2": "b", "name": "x"},
+		},
+		{
+			name: "string-keyed table becomes map",
+			in:   mkMap(),
+			want: map[string]any{"name": "x"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := luaTableToGo(tt.in)
+			if tt.wantErr {
+				if got != nil {
+					t.Fatalf("expected nil/err, got %#v", got)
+				}
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("mismatch:\nwant %#v\ngot  %#v", tt.want, got)
+			}
+		})
 	}
 }

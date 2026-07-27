@@ -1,0 +1,5 @@
+.rpack.d/
+exec.rpack.lock.yaml
+hello.sh
+goodbye.sh
+README_OUTPUT.txt

@@ -70,6 +70,10 @@ local output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), {
     author = values.author,
 })
 rpack.write("./rpack_users.md", output)
+
+-- Ship an executable script: declare its mode explicitly.
+-- (Equivalent: rpack.write(...) followed by rpack.chmod("./deploy.sh", "755"))
+rpack.write("./deploy.sh", "#!/bin/sh\necho deploying\n", { mode = "755" })
 ```
 
 **`schema.cue`** (optional) — validates the user's values:
@@ -165,9 +169,15 @@ Writes to `rpack:` or `map:` are blocked. Reads from the target directory are bl
 
 Scripts are pure: same inputs always produce same outputs. The executor detects read-after-write conflicts and fails if a script reads a file it previously wrote. This guarantees idempotent execution.
 
+### Output file permissions
+
+Output files are created with mode `644` by default (umask-independent). Scripts set permissions explicitly, either with the `mode` option on `write`/`copy` or with `rpack.chmod(path, mode)` after the last write to a path — a write always resets the mode to `644`. Modes are octal strings (`"755"`, `"600"`); special bits are not supported.
+
+Note: git only preserves the executable bit, so modes other than `644`/`755` report drift after a fresh clone until `rpack run --force` re-converges.
+
 ### Lockfiles
 
-After execution, rpack writes a lockfile tracking all output files with SHA256 checksums. On subsequent runs, rpack verifies that managed files haven't been modified externally. Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
+After execution, rpack writes a lockfile tracking all output files with SHA256 checksums and permission modes. On subsequent runs, rpack verifies that managed files haven't been modified externally — content changes and permission changes are both detected. Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
 
 ## Configuration
 

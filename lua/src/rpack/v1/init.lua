@@ -24,7 +24,22 @@ function rpack.values() end
 --- Copies an file from source to destination
 --- @param inputfile string The source file.
 --- @param outputfile string Destination file of copy.
-function rpack.copy(inputfile, outputfile) end
+--- @param[opt] opts table Options: `mode` — octal permission string like `"755"` applied to the destination after copying (see `rpack.chmod`).
+function rpack.copy(inputfile, outputfile, opts) end
+
+--- Change the permission bits of an already-written output file.
+--- The mode is an octal string of exactly 3 digits like `"755"` or `"600"`
+--- (special bits are not supported; the file must stay owner-readable).
+--- Only target paths (`./file`) and `temp:` files can be chmod'ed;
+--- `rpack:` and `map:` are read-only. Directories are not supported.
+--- ORDERING RULE: chmod applies to the current staged content only —
+--- a later `write`/`copy` to the same path resets the mode to `644`,
+--- so chmod after your last write.
+--- Note: chmod'ing a `temp:` file does not propagate the mode through a
+--- later `copy` (copy always produces `644` unless given `opts.mode`).
+--- @param file string The file to chmod (must already be written).
+--- @param mode string Octal permission string, e.g. `"755"`.
+function rpack.chmod(file, mode) end
 
 --- Convert yaml to table
 --- @param str string The yaml in string format
@@ -69,7 +84,8 @@ function rpack.read(file) end
 --- Write a string to a file
 --- @param file string The file to write to.
 --- @param str string The string to write.
-function rpack.write(file, str) end
+--- @param[opt] opts table Options: `mode` — octal permission string like `"755"` applied after writing (see `rpack.chmod`).
+function rpack.write(file, str, opts) end
 
 --- Template string contents with data.
 --- It uses golangs text/template functionality, see [Go text template](https://pkg.go.dev/text/template).

@@ -381,7 +381,7 @@ func TestComputeFilesToMove_DedupesDuplicateWrites(t *testing.T) {
 		t.Fatalf("write2: %v", err)
 	}
 
-	files, checksums, err := computeFilesToMove(fs, runDir)
+	files, checksums, modes, err := computeFilesToMove(fs, runDir)
 	if err != nil {
 		t.Fatalf("computeFilesToMove: %v", err)
 	}
@@ -395,6 +395,9 @@ func TestComputeFilesToMove_DedupesDuplicateWrites(t *testing.T) {
 	want, _ := util.Sha256File(absPath)
 	if checksums[absPath] != want {
 		t.Fatalf("checksum mismatch: got %q want %q", checksums[absPath], want)
+	}
+	if modes[absPath] != "644" {
+		t.Fatalf("mode = %q, want 644 (normalized staged write)", modes[absPath])
 	}
 	// The deduped file keeps the content of the last write.
 	got, _ := os.ReadFile(absPath) //nolint:gosec // test
@@ -419,7 +422,7 @@ func TestComputeFilesToMove_MissingFileOnDisk_ReturnsChecksumError(t *testing.T)
 	if err := os.Remove(filepath.Join(runDir, "gone.txt")); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := computeFilesToMove(fs, runDir)
+	_, _, _, err := computeFilesToMove(fs, runDir)
 	if err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("expected checksum error, got %v", err)
 	}
@@ -439,8 +442,9 @@ func TestBuildNewLockfile_RecordsPathsAndChecksums(t *testing.T) {
 		{Path: "sub/b.txt", AbsPath: p2},
 	}
 	checksums := map[string]string{p1: c1, p2: c2}
+	modes := map[string]string{p1: "644", p2: "644"}
 
-	lf := buildNewLockfile(files, checksums)
+	lf := buildNewLockfile(files, checksums, modes)
 	if len(lf.Files) != 2 {
 		t.Fatalf("lockfile has %d files, want 2", len(lf.Files))
 	}
@@ -466,13 +470,14 @@ func TestBuildNewLockfile_MissingChecksum_Panics(t *testing.T) {
 		{Path: "ghost.txt", AbsPath: filepath.Join(dir, "ghost.txt")}, // no checksum
 	}
 	checksums := map[string]string{p1: c1}
+	modes := map[string]string{p1: "644"}
 
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("expected panic for missing checksum")
 		}
 	}()
-	_ = buildNewLockfile(files, checksums)
+	_ = buildNewLockfile(files, checksums, modes)
 }
 
 func TestGuardAddedFiles_RefusesExistingWithoutForce(t *testing.T) {
@@ -589,5 +594,213 @@ func TestClassifyError(t *testing.T) {
 	}
 	if got := classifyError(errors.New("misc")); got != "unknown" {
 		t.Fatalf("misc -> %q, want unknown", got)
+	}
+}
+
+// --- Mode propagation & lockfile mode tracking (ADR 0001) --------------------
+
+// fileMode returns the permission bits of path.
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path) //nolint:gosec // test
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Mode().Perm()
+}
+
+const chmodScript = `local rpack = require("rpack.v1")
+rpack.write("./deploy.sh", "#!/bin/sh\necho hi\n", {mode = "755"})
+rpack.write("./notes.txt", "plain")
+`
+
+// TestModeSurvival_FourPaths proves a declared mode survives every output
+// path (ADR 0001): rename (managed), --output-dir, dry-run+--output-dir,
+// and direct-to-CWD.
+func TestModeSurvival_FourPaths(t *testing.T) {
+	defDir := writeDef(t, map[string]string{
+		"rpack.yaml": minimalDefYAML("modes"),
+		"script.lua": chmodScript,
+	})
+
+	t.Run("direct to CWD", func(t *testing.T) {
+		target := t.TempDir()
+		if err := runDirect(t, &Executor{}, defDir, nil, target); err != nil {
+			t.Fatalf("ExecRPackDirect: %v", err)
+		}
+		if got := fileMode(t, filepath.Join(target, "deploy.sh")); got != 0o755 {
+			t.Fatalf("deploy.sh mode = %o, want 755", got)
+		}
+		if got := fileMode(t, filepath.Join(target, "notes.txt")); got != 0o644 {
+			t.Fatalf("notes.txt mode = %o, want 644", got)
+		}
+	})
+
+	t.Run("output dir", func(t *testing.T) {
+		target := t.TempDir()
+		out := filepath.Join(target, "out")
+		if err := runDirect(t, &Executor{OutputDir: out}, defDir, nil, target); err != nil {
+			t.Fatalf("ExecRPackDirect: %v", err)
+		}
+		if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o755 {
+			t.Fatalf("deploy.sh mode = %o, want 755", got)
+		}
+	})
+
+	t.Run("dry run with output dir", func(t *testing.T) {
+		target := t.TempDir()
+		out := filepath.Join(target, "out")
+		if err := runDirect(t, &Executor{DryRun: true, OutputDir: out}, defDir, nil, target); err != nil {
+			t.Fatalf("ExecRPackDirect: %v", err)
+		}
+		if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o755 {
+			t.Fatalf("deploy.sh mode = %o, want 755", got)
+		}
+	})
+
+	t.Run("managed rename path", func(t *testing.T) {
+		_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+		if err := runExecRPack(t, false, cfg, useDir); err != nil {
+			t.Fatalf("ExecRPack: %v", err)
+		}
+		if got := fileMode(t, filepath.Join(useDir, "deploy.sh")); got != 0o755 {
+			t.Fatalf("deploy.sh mode = %o, want 755", got)
+		}
+	})
+}
+
+// TestCopyDir_ResetsStaleModeOnOverwrite pins the explicit post-write chmod
+// in copyDir: a --force rerun into an existing output where the previous run
+// left 0755 must converge to 0644 when the script no longer declares a mode
+// (ADR 0001 Q5.3/Q9.2).
+func TestCopyDir_ResetsStaleModeOnOverwrite(t *testing.T) {
+	defDir := writeDef(t, map[string]string{
+		"rpack.yaml": minimalDefYAML("stale"),
+		"script.lua": chmodScript,
+	})
+	target := t.TempDir()
+	out := filepath.Join(target, "out")
+
+	if err := runDirect(t, &Executor{OutputDir: out}, defDir, nil, target); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+	if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o755 {
+		t.Fatalf("run1 deploy.sh mode = %o, want 755", got)
+	}
+
+	// Script no longer declares the mode.
+	if err := os.WriteFile(filepath.Join(defDir, "script.lua"),
+		[]byte(`local rpack = require("rpack.v1"); rpack.write("./deploy.sh", "#!/bin/sh\necho hi\n")`), 0o600); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	if err := runDirect(t, &Executor{OutputDir: out, Force: true}, defDir, nil, target); err != nil {
+		t.Fatalf("run2: %v", err)
+	}
+	if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o644 {
+		t.Fatalf("run2 deploy.sh mode = %o, want 644 (stale 755 must not leak)", got)
+	}
+}
+
+// lockfileModes parses the lockfile in useDir and returns path → mode.
+func lockfileModes(t *testing.T, useDir string) map[string]string {
+	t.Helper()
+	lf, err := loadRPackLockFile(filepath.Join(useDir, "app.rpack.lock.yaml"))
+	if err != nil {
+		t.Fatalf("load lockfile: %v", err)
+	}
+	modes := map[string]string{}
+	for _, f := range lf.Files {
+		modes[f.Path] = f.Mode
+	}
+	return modes
+}
+
+// TestLockfile_RecordsModes proves every managed file gets an explicit
+// recorded mode, including the "644" default (ADR 0001 Q6.6).
+func TestLockfile_RecordsModes(t *testing.T) {
+	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("ExecRPack: %v", err)
+	}
+	modes := lockfileModes(t, useDir)
+	if modes["deploy.sh"] != "755" {
+		t.Fatalf("deploy.sh recorded mode = %q, want 755", modes["deploy.sh"])
+	}
+	if modes["notes.txt"] != "644" {
+		t.Fatalf("notes.txt recorded mode = %q, want 644 (default recorded explicitly)", modes["notes.txt"])
+	}
+}
+
+// TestLockfile_ModeDriftRefusedThenForceHeals covers G's enforcement on the
+// run guard: out-of-band chmod is refused without --force and healed with it
+// (ADR 0001 Branch 7).
+func TestLockfile_ModeDriftRefusedThenForceHeals(t *testing.T) {
+	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+
+	// Out-of-band chmod, content untouched.
+	if err := os.Chmod(filepath.Join(useDir, "deploy.sh"), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
+	err := runExecRPack(t, false, cfg, useDir)
+	if err == nil || !strings.Contains(err.Error(), "permissions were changed outside of rpack") {
+		t.Fatalf("expected mode-drift refusal, got %v", err)
+	}
+	// The message carries want/got pairs.
+	if !strings.Contains(err.Error(), "deploy.sh (recorded 755, on disk 644)") {
+		t.Fatalf("expected want/got pair in message, got %v", err)
+	}
+
+	if err := runExecRPack(t, true, cfg, useDir); err != nil {
+		t.Fatalf("force run: %v", err)
+	}
+	if got := fileMode(t, filepath.Join(useDir, "deploy.sh")); got != 0o755 {
+		t.Fatalf("after force heal mode = %o, want 755", got)
+	}
+}
+
+// TestChecker_ModeDrift covers G's enforcement on `rpack check`
+// (checker.go call site).
+func TestChecker_ModeDrift(t *testing.T) {
+	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(useDir, "deploy.sh"), 0o600); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	t.Chdir(useDir)
+	err := (&Checker{}).CheckIntegrity(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "permissions were changed outside of rpack") {
+		t.Fatalf("expected checker mode-drift error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "deploy.sh (recorded 755, on disk 600)") {
+		t.Fatalf("expected want/got pair, got %v", err)
+	}
+}
+
+// TestLockfile_UpgradeWindow covers pre-feature lockfiles: entries without a
+// recorded mode skip the mode check, and the next run rewrites the lockfile
+// with modes recorded (ADR 0001 Q6.3, P5).
+func TestLockfile_UpgradeWindow(t *testing.T) {
+	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+
+	// Hand-write a pre-feature lockfile: correct sha, no mode key. The sha is
+	// of the content the script will produce.
+	sha := util.Sha256String("#!/bin/sh\necho hi\n")
+	preFeature := "\"@schema_version\": \"v1\"\nfiles:\n- path: deploy.sh\n  sha: " + sha + "\n"
+	writeFile(t, filepath.Join(useDir, "app.rpack.lock.yaml"), preFeature)
+
+	// Run succeeds despite no recorded modes...
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("upgrade run: %v", err)
+	}
+	// ...and rewrites the lockfile with modes recorded.
+	modes := lockfileModes(t, useDir)
+	if modes["deploy.sh"] != "755" {
+		t.Fatalf("after upgrade, deploy.sh mode = %q, want 755", modes["deploy.sh"])
 	}
 }

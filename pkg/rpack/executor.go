@@ -334,7 +334,13 @@ func printDryRunOutput(runDir string) error {
 		if rdErr != nil {
 			return fmt.Errorf("failed to read file: %s: %w", relPath, rdErr)
 		}
-		fmt.Printf("=== ./%s ===\n", relPath)
+		info, statErr := os.Stat(absPath)
+		if statErr != nil {
+			return fmt.Errorf("failed to stat file: %s: %w", relPath, statErr)
+		}
+		// The header shows the mode: dry-run's contract is to show what would
+		// land, and mode now lands (ADR 0001).
+		fmt.Printf("=== ./%s (mode %s) ===\n", relPath, FormatMode(info.Mode()))
 		_, _ = os.Stdout.Write(content)
 		fmt.Println()
 	}
@@ -409,6 +415,12 @@ func copyDir(src, dst string) error {
 		if wrErr := os.WriteFile(targetPath, content, 0o644); wrErr != nil { //nolint:gosec // standard permissions
 			return fmt.Errorf("failed to write: %s: %w", targetPath, wrErr)
 		}
+		// Propagate the staged file's mode (ADR 0001). os.WriteFile's perm is
+		// creation-only, so without this explicit chmod a --force rerun into an
+		// existing output would keep the previous run's stale mode.
+		if chErr := os.Chmod(targetPath, info.Mode().Perm()); chErr != nil {
+			return fmt.Errorf("failed to set mode: %s: %w", targetPath, chErr)
+		}
 		return nil
 	})
 }
@@ -445,11 +457,11 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 	}
 
 	// Normal mode: relocate produced files into execPath under lockfile control.
-	filesToMove, checksums, err := computeFilesToMove(fs, pi.RunPath)
+	filesToMove, checksums, modes, err := computeFilesToMove(fs, pi.RunPath)
 	if err != nil {
 		return err
 	}
-	return e.applyLockfileChanges(ci.LockFile, execPath, ci.LockFilePath, filesToMove, checksums)
+	return e.applyLockfileChanges(ci.LockFile, execPath, ci.LockFilePath, filesToMove, checksums, modes)
 }
 
 // ExecRPackDirect runs an rpack from a local definition directory
@@ -541,13 +553,15 @@ func resolveDirectInputs(inputs map[string]string) ([]*RPackResolvedInput, error
 }
 
 // computeFilesToMove enumerates the target write handles of fs, mapping each
-// unique produced file to a ControlledFile paired with its on-disk sha256.
-// A handle written multiple times by the script is counted once; this is the
-// input to the lockfile-based relocation in ExecRPack's terminal path.
-func computeFilesToMove(fs *RPackFS, runDir string) ([]*ControlledFile, map[string]string, error) {
+// unique produced file to a ControlledFile paired with its on-disk sha256 and
+// its effective mode (ADR 0001: captured from the staged file, deterministic
+// because staged target writes are normalized). A handle written multiple
+// times by the script is counted once; this is the input to the
+// lockfile-based relocation in ExecRPack's terminal path.
+func computeFilesToMove(fs *RPackFS, runDir string) (filesToMove []*ControlledFile, checksums, modes map[string]string, err error) {
 	visited := make(map[string]struct{})
-	var filesToMove []*ControlledFile
-	checksums := make(map[string]string)
+	checksums = make(map[string]string)
+	modes = make(map[string]string)
 	for _, handle := range fs.TargetWriteHandles() {
 		relPath := handle.IndirectTargetPath()
 		absPath := filepath.Clean(filepath.Join(runDir, relPath))
@@ -557,16 +571,21 @@ func computeFilesToMove(fs *RPackFS, runDir string) ([]*ControlledFile, map[stri
 		}
 		chsum, err := util.Sha256File(absPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to calculate checksum of: %s: %w", absPath, err)
+			return nil, nil, nil, fmt.Errorf("failed to calculate checksum of: %s: %w", absPath, err)
+		}
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to stat: %s: %w", absPath, err)
 		}
 		checksums[absPath] = chsum
+		modes[absPath] = FormatMode(info.Mode())
 		filesToMove = append(filesToMove, &ControlledFile{
 			Path:    relPath,
 			AbsPath: absPath,
 		})
 		visited[absPath] = struct{}{}
 	}
-	return filesToMove, checksums, nil
+	return filesToMove, checksums, modes, nil
 }
 
 // applyLockfileChanges reconciles the lockfile-protected target directory with
@@ -575,12 +594,12 @@ func computeFilesToMove(fs *RPackFS, runDir string) ([]*ControlledFile, map[stri
 // unless Force), moves produced files into place, removes files no longer
 // managed, and writes the new lockfile. It is the lockfile half of ExecRPack's
 // terminal path.
-func (e *Executor) applyLockfileChanges(oldLock *RPackLockFile, execPath, lockFilePath string, filesToMove []*ControlledFile, checksums map[string]string) error {
+func (e *Executor) applyLockfileChanges(oldLock *RPackLockFile, execPath, lockFilePath string, filesToMove []*ControlledFile, checksums, modes map[string]string) error {
 	if err := e.guardLockfileIntegrity(oldLock, execPath); err != nil {
 		return err
 	}
 
-	newLockfile := buildNewLockfile(filesToMove, checksums)
+	newLockfile := buildNewLockfile(filesToMove, checksums, modes)
 	changes := newLockfile.Changes(oldLock)
 	slog.Info("New files in lockfile", "files", changes.Added)
 	slog.Info("Files no longer maintained by rpack, removing", "files", changes.Removed)
@@ -616,6 +635,13 @@ func (e *Executor) guardLockfileIntegrity(oldLock *RPackLockFile, execPath strin
 			return fmt.Errorf("some locked files were modified outside of rpack, use force flag to ignore: %s", modFilesStr)
 		}
 	}
+	if len(integrity.ModeModified) > 0 {
+		modFilesStr := strings.Join(integrity.ModeModified, ",")
+		slog.Warn("Some files in lockfile had their permissions changed outside of rpack", "files", modFilesStr)
+		if !e.Force {
+			return fmt.Errorf("some locked files' permissions were changed outside of rpack, use force flag to ignore: %s", modFilesStr)
+		}
+	}
 	if len(integrity.Removed) > 0 {
 		slog.Warn("Some files in lockfile were removed outside of rpack", "files", strings.Join(integrity.Removed, ","))
 	}
@@ -642,16 +668,22 @@ func (e *Executor) guardAddedFiles(execPath string, added []string) error {
 }
 
 // buildNewLockfile constructs the lockfile recording the files produced by this
-// run. Panics if a produced file has no checksum: computeFilesToMove always
-// pairs them, so this is an invariant guard against a future caller bug.
-func buildNewLockfile(filesToMove []*ControlledFile, checksums map[string]string) *RPackLockFile {
+// run. Panics if a produced file has no checksum or no mode: computeFilesToMove
+// always pairs them, so this is an invariant guard against a future caller bug.
+// The mode is always recorded (including the "644" default) so an absent mode
+// unambiguously means "pre-feature lockfile, unknown" (ADR 0001).
+func buildNewLockfile(filesToMove []*ControlledFile, checksums, modes map[string]string) *RPackLockFile {
 	lockfile := NewRPackLockFile()
 	for _, wFile := range filesToMove {
 		chsum, ok := checksums[wFile.AbsPath]
 		if !ok {
 			panic("Can't find checksum for file")
 		}
-		lockfile.AddFile(wFile.Path, chsum)
+		mode, ok := modes[wFile.AbsPath]
+		if !ok || mode == "" {
+			panic("Can't find mode for file")
+		}
+		lockfile.AddFile(wFile.Path, chsum, mode)
 	}
 	return lockfile
 }

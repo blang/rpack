@@ -2,6 +2,8 @@ package rpack
 
 import (
 	_ "embed"
+	"log/slog"
+	"os"
 	"path/filepath"
 
 	"fmt"
@@ -110,13 +112,20 @@ type RPackLockFileFile struct {
 	Path string `json:"path"`
 	// Sha of the path, so we can check if we will remove a modified file
 	Sha string `json:"sha"`
+	// Mode records the file's permission bits as an octal string ("644",
+	// "755") so out-of-band chmod is detected as drift (ADR 0001).
+	// A string type keeps the YAML output quoted, dodging the YAML
+	// octal-integer trap. Empty means unknown: the entry was written by a
+	// pre-feature rpack and the mode check is skipped for it.
+	Mode string `json:"mode"`
 }
 
 // AddFile adds a file entry to the lock file.
-func (f *RPackLockFile) AddFile(path, sha string) {
+func (f *RPackLockFile) AddFile(path, sha, mode string) {
 	f.Files = append(f.Files, &RPackLockFileFile{
 		Path: path,
 		Sha:  sha,
+		Mode: mode,
 	})
 }
 
@@ -125,7 +134,11 @@ func (f *RPackLockFile) AddFile(path, sha string) {
 //nolint:revive // intentional: RPack prefix is the domain convention
 type RPackLockFileIntegrity struct {
 	Modified []string
-	Removed  []string
+	// ModeModified holds entries formatted with want/got pairs
+	// ("deploy.sh (recorded 755, on disk 644)") so callers can surface
+	// directly why a content-identical file was flagged (ADR 0001).
+	ModeModified []string
+	Removed      []string
 }
 
 // CheckIntegrity checks if managed files are still valid
@@ -140,10 +153,27 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 		}
 		chsum, err := util.Sha256File(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("could not calculate checksum for %s: %s: %w", file.Path, filePath, err)
-		}
-		if file.Sha != chsum {
+			// An unreadable managed file (e.g. chmod 000 out-of-band) is
+			// classified as drift rather than a hard error, so a --force run
+			// can always heal it (ADR 0001).
+			slog.Warn("Could not checksum managed file, treating as modified", "file", file.Path, "error", err)
 			res.Modified = append(res.Modified, file.Path)
+		} else if file.Sha != chsum {
+			res.Modified = append(res.Modified, file.Path)
+		}
+		if file.Mode == "" {
+			// Pre-feature lockfile entry: the recorded mode is unknown, so
+			// there is nothing honest to check against. The next successful
+			// run rewrites the lockfile with modes recorded (ADR 0001).
+			slog.Warn("Lockfile entry has no recorded mode, skipping mode check", "file", file.Path)
+			continue
+		}
+		info, statErr := os.Stat(filePath)
+		if statErr != nil {
+			return nil, fmt.Errorf("could not stat %s: %s: %w", file.Path, filePath, statErr)
+		}
+		if onDisk := FormatMode(info.Mode()); onDisk != file.Mode {
+			res.ModeModified = append(res.ModeModified, fmt.Sprintf("%s (recorded %s, on disk %s)", file.Path, file.Mode, onDisk))
 		}
 	}
 	return res, nil

@@ -40,7 +40,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 
 		// Create a lockfile entry with the correct checksum.
 		lockFile := NewRPackLockFile()
-		lockFile.AddFile(fileName, sha)
+		lockFile.AddFile(fileName, sha, "")
 
 		// Check integrity.
 		integrity, err := lockFile.CheckIntegrity(tempDir)
@@ -62,7 +62,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 		dummySHA := "dummysha"
 
 		lockFile := NewRPackLockFile()
-		lockFile.AddFile(fileName, dummySHA)
+		lockFile.AddFile(fileName, dummySHA, "")
 
 		integrity, err := lockFile.CheckIntegrity(tempDir)
 		if err != nil {
@@ -94,7 +94,7 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 		}
 
 		lockFile := NewRPackLockFile()
-		lockFile.AddFile(fileName, sha)
+		lockFile.AddFile(fileName, sha, "")
 
 		integrity, err := lockFile.CheckIntegrity(tempDir)
 		if err != nil {
@@ -134,9 +134,9 @@ func TestRPackLockFileCheckIntegrity(t *testing.T) {
 
 		// Build a lockfile with all three entries.
 		lockFile := NewRPackLockFile()
-		lockFile.AddFile(validFile, validSHA)
-		lockFile.AddFile(missingFile, "dummy")
-		lockFile.AddFile(modFile, modSHA)
+		lockFile.AddFile(validFile, validSHA, "")
+		lockFile.AddFile(missingFile, "dummy", "")
+		lockFile.AddFile(modFile, modSHA, "")
 
 		integrity, err := lockFile.CheckIntegrity(tempDir)
 		if err != nil {
@@ -163,12 +163,12 @@ func TestRPackLockFileChanges(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
 		// Both old and new are identical.
 		oldLF := NewRPackLockFile()
-		oldLF.AddFile("a.txt", "sha1")
-		oldLF.AddFile("b.txt", "sha2")
+		oldLF.AddFile("a.txt", "sha1", "")
+		oldLF.AddFile("b.txt", "sha2", "")
 
 		newLF := NewRPackLockFile()
-		newLF.AddFile("a.txt", "sha1")
-		newLF.AddFile("b.txt", "sha2")
+		newLF.AddFile("a.txt", "sha1", "")
+		newLF.AddFile("b.txt", "sha2", "")
 
 		changes := newLF.Changes(oldLF)
 
@@ -183,11 +183,11 @@ func TestRPackLockFileChanges(t *testing.T) {
 	t.Run("file added", func(t *testing.T) {
 		// old lockfile has one file, new lockfile has that file plus one new file.
 		oldLF := NewRPackLockFile()
-		oldLF.AddFile("common.txt", "sha-common")
+		oldLF.AddFile("common.txt", "sha-common", "")
 
 		newLF := NewRPackLockFile()
-		newLF.AddFile("common.txt", "sha-common")
-		newLF.AddFile("new.txt", "sha-new")
+		newLF.AddFile("common.txt", "sha-common", "")
+		newLF.AddFile("new.txt", "sha-new", "")
 
 		changes := newLF.Changes(oldLF)
 		added := sortStrings(changes.Added)
@@ -207,11 +207,11 @@ func TestRPackLockFileChanges(t *testing.T) {
 	t.Run("file removed", func(t *testing.T) {
 		// old lockfile has two files, new lockfile has only one.
 		oldLF := NewRPackLockFile()
-		oldLF.AddFile("a.txt", "sha-a")
-		oldLF.AddFile("b.txt", "sha-b")
+		oldLF.AddFile("a.txt", "sha-a", "")
+		oldLF.AddFile("b.txt", "sha-b", "")
 
 		newLF := NewRPackLockFile()
-		newLF.AddFile("a.txt", "sha-a")
+		newLF.AddFile("a.txt", "sha-a", "")
 
 		changes := newLF.Changes(oldLF)
 		added := sortStrings(changes.Added)
@@ -232,12 +232,12 @@ func TestRPackLockFileChanges(t *testing.T) {
 		// Old lockfile has files "a.txt" and "b.txt". New lockfile has "b.txt" (common)
 		// plus "c.txt" as new.
 		oldLF := NewRPackLockFile()
-		oldLF.AddFile("a.txt", "sha-a")
-		oldLF.AddFile("b.txt", "sha-b")
+		oldLF.AddFile("a.txt", "sha-a", "")
+		oldLF.AddFile("b.txt", "sha-b", "")
 
 		newLF := NewRPackLockFile()
-		newLF.AddFile("b.txt", "sha-b")
-		newLF.AddFile("c.txt", "sha-c")
+		newLF.AddFile("b.txt", "sha-b", "")
+		newLF.AddFile("c.txt", "sha-c", "")
 
 		changes := newLF.Changes(oldLF)
 		added := sortStrings(changes.Added)
@@ -251,6 +251,98 @@ func TestRPackLockFileChanges(t *testing.T) {
 		}
 		if !lo.ElementsMatch(removed, expectedRemoved) {
 			t.Errorf("Expected removed files %v, got %v", expectedRemoved, removed)
+		}
+	})
+}
+
+// --- Mode integrity (ADR 0001) ----------------------------------------------
+
+//nolint:gocognit,gocyclo // test: table of independent subtest scenarios
+func TestRPackLockFileCheckIntegrity_Modes(t *testing.T) {
+	setup := func(t *testing.T, name string, mode os.FileMode) (dir, sha string) {
+		t.Helper()
+		dir = t.TempDir()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("content"), mode); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		return dir, calculateSHA256(t, p)
+	}
+
+	t.Run("mode matches", func(t *testing.T) {
+		dir, sha := setup(t, "f.sh", 0o755)
+		lf := NewRPackLockFile()
+		lf.AddFile("f.sh", sha, "755")
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(integrity.ModeModified) != 0 {
+			t.Errorf("unexpected mode drift: %v", integrity.ModeModified)
+		}
+	})
+
+	t.Run("mode drift reported with want/got", func(t *testing.T) {
+		dir, sha := setup(t, "f.sh", 0o644)
+		lf := NewRPackLockFile()
+		lf.AddFile("f.sh", sha, "755")
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(integrity.ModeModified) != 1 ||
+			integrity.ModeModified[0] != "f.sh (recorded 755, on disk 644)" {
+			t.Errorf("ModeModified = %v, want want/got pair", integrity.ModeModified)
+		}
+		if len(integrity.Modified) != 0 {
+			t.Errorf("content-only change expected none, got %v", integrity.Modified)
+		}
+	})
+
+	t.Run("absent mode skips check", func(t *testing.T) {
+		dir, sha := setup(t, "f.sh", 0o600)
+		lf := NewRPackLockFile()
+		lf.AddFile("f.sh", sha, "") // pre-feature lockfile entry
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(integrity.ModeModified) != 0 {
+			t.Errorf("absent mode must skip check, got %v", integrity.ModeModified)
+		}
+	})
+
+	t.Run("removed wins over mode comparison", func(t *testing.T) {
+		dir, _ := setup(t, "other.txt", 0o644)
+		lf := NewRPackLockFile()
+		lf.AddFile("ghost.sh", "dummysha", "755")
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(integrity.Removed) != 1 || integrity.Removed[0] != "ghost.sh" {
+			t.Errorf("Removed = %v", integrity.Removed)
+		}
+		if len(integrity.ModeModified) != 0 {
+			t.Errorf("removed file must not be mode-compared, got %v", integrity.ModeModified)
+		}
+	})
+
+	t.Run("unreadable file classified as modified not error", func(t *testing.T) {
+		dir, sha := setup(t, "secret.txt", 0o644)
+		lf := NewRPackLockFile()
+		lf.AddFile("secret.txt", sha, "644")
+		// Out-of-band chmod 000: the file can be stat'ed but not hashed.
+		if err := os.Chmod(filepath.Join(dir, "secret.txt"), 0o000); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "secret.txt"), 0o600) })
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatalf("unreadable file must not hard-error (force must be able to heal): %v", err)
+		}
+		if len(integrity.Modified) != 1 || integrity.Modified[0] != "secret.txt" {
+			t.Errorf("Modified = %v, want secret.txt classified as drift", integrity.Modified)
 		}
 	})
 }

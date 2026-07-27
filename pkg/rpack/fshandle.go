@@ -21,6 +21,9 @@ type FSHandle interface {
 	IndirectTargetPath() string
 	Read() ([]byte, error)
 	Write([]byte) error
+	// Chmod sets the file's permission bits. The handle must point to an
+	// existing regular file; BaseFS.Chmod enforces that before calling.
+	Chmod(mode os.FileMode) error
 	Stat() (exists bool, dir bool, err error)
 	ReadDir() (files []FSHandle, dirs []FSHandle, err error)
 	Transfer(absPath string) error // Transfers a file to a target file location - used for later on relocating
@@ -73,6 +76,26 @@ func (f *FileBackedFSHandle) Write(b []byte) error {
 	}
 	if err := os.WriteFile(f.absPath, b, 0o644); err != nil { //nolint:gosec // intentional: standard file permissions for package manager output
 		return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
+	}
+	// Normalize staged target outputs to the canonical default mode (ADR 0001):
+	// os.WriteFile applies its perm only at creation and through the process
+	// umask, so without this explicit chmod the staged mode would depend on
+	// the caller's umask and on whether the file pre-existed. The explicit
+	// chmod makes every target write deterministic and implements
+	// reset-on-write: a write always re-establishes 0644, discarding earlier
+	// chmods. Temp files are excluded so they keep umask-provided privacy.
+	if f.resolver == TargetResolver {
+		if err := os.Chmod(f.absPath, 0o644); err != nil { //nolint:gosec // intentional: canonical default mode for package manager output
+			return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
+		}
+	}
+	return nil
+}
+
+// Chmod sets the file's permission bits on the backing file.
+func (f *FileBackedFSHandle) Chmod(mode os.FileMode) error {
+	if err := os.Chmod(f.absPath, mode); err != nil {
+		return fmt.Errorf("could not chmod %s: %w", f.friendlyPath, err)
 	}
 	return nil
 }

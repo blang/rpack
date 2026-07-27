@@ -2,6 +2,7 @@ package rpack
 
 import (
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -17,6 +18,7 @@ func (m *mockFSHandle) FriendlyPath() string       { return m.friendlyPath }
 func (m *mockFSHandle) IndirectTargetPath() string { return m.indirectTargetPath }
 func (m *mockFSHandle) Read() ([]byte, error)      { return nil, nil }
 func (m *mockFSHandle) Write([]byte) error         { return nil }
+func (m *mockFSHandle) Chmod(os.FileMode) error    { return nil }
 func (m *mockFSHandle) Stat() (exists, dir bool, err error) {
 	return false, false, nil
 }

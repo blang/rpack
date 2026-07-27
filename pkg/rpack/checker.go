@@ -37,6 +37,14 @@ func (c *Checker) CheckIntegrity(ctx context.Context, name string) error {
 		return fmt.Errorf("some locked files were modified outside of rpack: %s\nTo overwrite, run: rpack run --force <config>", modFilesStr)
 	}
 
+	// Permissions drift is enforced with the same severity as content
+	// modification (ADR 0001).
+	if len(oldLockIntegrity.ModeModified) > 0 {
+		modFilesStr := strings.Join(oldLockIntegrity.ModeModified, ",")
+		slog.Warn("Some files in lockfile had their permissions changed outside of rpack", "files", modFilesStr)
+		return fmt.Errorf("some locked files' permissions were changed outside of rpack: %s\nTo overwrite, run: rpack run --force <config>", modFilesStr)
+	}
+
 	// Warn about files that are removed but still in the lockfile
 	if len(oldLockIntegrity.Removed) > 0 {
 		slog.Warn("Some files in lockfile were removed outside of rpack", "files", strings.Join(oldLockIntegrity.Removed, ","))

@@ -3,6 +3,7 @@ package rpack
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"text/template"
 
 	"fmt"
@@ -15,6 +16,7 @@ import (
 type LuaAPIFS interface {
 	Write(name string, b []byte) error
 	Read(name string) ([]byte, error)
+	Chmod(name string, mode os.FileMode) error
 	Stat(name string) (exists bool, dir bool, err error)
 	ReadDir(name string) (_files []string, _dirs []string, _err error)
 	ReadDirAll(name string) (_files []string, _dirs []string, _err error)
@@ -34,6 +36,7 @@ func NewRPackAPI(fs LuaAPIFS) *RPackAPI {
 func (a *RPackAPI) Funcs() map[string]lua.LGFunction {
 	return map[string]lua.LGFunction{
 		"copy":      a.luaCopy,
+		"chmod":     a.luaChmod,
 		"from_json": luaFromJSON,
 		"to_json":   luaToJSON,
 		"from_yaml": luaFromYAML,
@@ -57,6 +60,7 @@ func (a *RPackAPI) RegisterFunc(name string) lua.LGFunction {
 func (a *RPackAPI) luaCopy(L *lua.LState) int {
 	in := L.CheckString(1)
 	out := L.CheckString(2)
+	mode, hasMode := checkOptsMode(L, 3)
 	b, err := a.fs.Read(in)
 	if err != nil {
 		L.ArgError(1, err.Error())
@@ -67,18 +71,95 @@ func (a *RPackAPI) luaCopy(L *lua.LState) int {
 		L.ArgError(2, err.Error())
 		return 0
 	}
+	a.applyOptsMode(L, out, mode, hasMode)
 	return 0
 }
 
 func (a *RPackAPI) luaWrite(L *lua.LState) int {
 	friendly := L.CheckString(1)
 	content := L.CheckString(2)
+	mode, hasMode := checkOptsMode(L, 3)
 	err := a.fs.Write(friendly, []byte(content))
 	if err != nil {
 		L.ArgError(1, err.Error())
 		return 0
 	}
+	a.applyOptsMode(L, friendly, mode, hasMode)
 	return 0
+}
+
+// luaChmod implements rpack.chmod(path, mode) (ADR 0001). It amends the mode
+// of an already-staged file; a later write resets the mode to 0644.
+func (a *RPackAPI) luaChmod(L *lua.LState) int {
+	friendly := L.CheckString(1)
+	mode := checkModeArg(L, 2)
+	if err := a.fs.Chmod(friendly, mode); err != nil {
+		L.ArgError(1, err.Error())
+		return 0
+	}
+	return 0
+}
+
+// applyOptsMode applies the optional opts-table mode after a successful
+// write/copy. The chmod goes through the same fs.Chmod path as rpack.chmod,
+// so access control, purity tracking, and recording treat both spellings
+// identically. Parse errors are attributed to the opts argument by
+// checkOptsMode; a filesystem failure here raises with the friendly path.
+func (a *RPackAPI) applyOptsMode(L *lua.LState, friendly string, mode os.FileMode, hasMode bool) {
+	if !hasMode {
+		return
+	}
+	if err := a.fs.Chmod(friendly, mode); err != nil {
+		L.RaiseError("failed to chmod %s: %s", friendly, err.Error())
+	}
+}
+
+// checkModeArg parses a required mode argument (octal string like "755").
+// Numbers are rejected deliberately: decimal 493 is unreadable, which is why
+// the grammar exists (ADR 0001).
+func checkModeArg(L *lua.LState, n int) os.FileMode {
+	str, ok := L.Get(n).(lua.LString)
+	if !ok {
+		L.ArgError(n, "mode must be an octal string like \"755\"")
+		return 0
+	}
+	mode, err := ParseOctalMode(string(str))
+	if err != nil {
+		L.ArgError(n, err.Error())
+		return 0
+	}
+	return mode
+}
+
+// checkOptsMode parses the optional trailing options table at argument n,
+// returning the requested mode and whether one was given. An absent argument
+// or nil means no options; an empty table is a valid no-op. Unknown keys are
+// hard errors (rpack's explicitness rule: a typo'd key must not be silently
+// ignored, and future keys like preserve_mode must not collide).
+func checkOptsMode(L *lua.LState, n int) (mode os.FileMode, hasMode bool) {
+	if L.GetTop() < n || L.Get(n) == lua.LNil {
+		return 0, false
+	}
+	tbl := L.CheckTable(n)
+	tbl.ForEach(func(k, v lua.LValue) {
+		key, ok := k.(lua.LString)
+		if !ok || string(key) != "mode" {
+			L.ArgError(n, fmt.Sprintf("unknown option %q (known: mode)", k.String()))
+			return
+		}
+		str, ok := v.(lua.LString)
+		if !ok {
+			L.ArgError(n, "mode must be an octal string like \"755\"")
+			return
+		}
+		m, err := ParseOctalMode(string(str))
+		if err != nil {
+			L.ArgError(n, err.Error())
+			return
+		}
+		mode, hasMode = m, true
+	})
+	return mode, hasMode
 }
 
 func (a *RPackAPI) luaRead(L *lua.LState) int {

@@ -108,6 +108,9 @@ func (fs *RPackFS) TargetWriteHandles() []FSHandle {
 type FS interface {
 	Write(name string, b []byte) error
 	Read(name string) ([]byte, error)
+	// Chmod sets the permission bits of an existing staged file (ADR 0001).
+	// It is recorded and access-controlled as a Write.
+	Chmod(name string, mode os.FileMode) error
 	Stat(name string) (exists, dir bool, err error)
 	ReadDir(name string) (_files, _dirs []string, _err error)
 	ReadDirAll(name string) (_files, _dirs []string, _err error)
@@ -130,6 +133,9 @@ func NewInMemoryFS() *InMemoryFS {
 type InMemoryFSEntry struct {
 	Content []byte
 	IsDir   bool
+	// Mode mirrors the real FS semantics: Write resets it to the canonical
+	// default 0644, Chmod amends it (ADR 0001 reset-on-write).
+	Mode os.FileMode
 }
 
 // Mkdir creates a directory in the in-memory filesystem.
@@ -149,6 +155,21 @@ func (fs *InMemoryFS) Write(name string, b []byte) error {
 	}
 	entry.Content = make([]byte, len(b))
 	copy(entry.Content, b)
+	entry.Mode = 0o644
+	return nil
+}
+
+// Chmod sets the mode of an existing entry, mirroring BaseFS.Chmod's
+// contract: the entry must exist and must not be a directory.
+func (fs *InMemoryFS) Chmod(name string, mode os.FileMode) error {
+	entry, ok := fs.Tree[name]
+	if !ok {
+		return fmt.Errorf("cannot chmod %s: file does not exist (write it first)", name)
+	}
+	if entry.IsDir {
+		return fmt.Errorf("cannot chmod %s: chmod on directories is not supported", name)
+	}
+	entry.Mode = mode
 	return nil
 }
 func (fs *InMemoryFS) Read(name string) ([]byte, error) {
@@ -220,6 +241,39 @@ func (fs *BaseFS) Write(name string, b []byte) error {
 		}
 	}
 	return handle.Write(b)
+}
+
+// Chmod sets the permission bits of an existing staged file (ADR 0001).
+// Ordering is deliberate: the shared writability check runs first so read-only
+// resolvers (rpack:/map:) always get the canonical access refusal; the
+// pre-hook existence check then guarantees the "write it first" message and
+// leaves zero recorder/purity residue when a script swallows the error via
+// pcall. Only then do the Write hooks fire (access control again, purity,
+// recorder) and the handle performs the chmod.
+func (fs *BaseFS) Chmod(name string, mode os.FileMode) error {
+	handle, err := fs.resolve(name)
+	if err != nil {
+		return err
+	}
+	if werr := checkWritable(handle); werr != nil {
+		return werr
+	}
+	exists, dir, err := handle.Stat()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("cannot chmod %s: file does not exist (write it first)", handle.FriendlyPath())
+	}
+	if dir {
+		return fmt.Errorf("cannot chmod %s: chmod on directories is not supported", handle.FriendlyPath())
+	}
+	for _, hook := range fs.Hooks {
+		if err := hook.Write(handle); err != nil {
+			return err
+		}
+	}
+	return handle.Chmod(mode)
 }
 
 func (fs *BaseFS) Read(name string) ([]byte, error) {
@@ -568,6 +622,14 @@ func (f *RPackAccessControlFSHook) Read(h FSHandle) error {
 	return nil
 }
 func (f *RPackAccessControlFSHook) Write(h FSHandle) error {
+	return checkWritable(h)
+}
+
+// checkWritable enforces the write access-control policy: rpack: and map:
+// handles are read-only. Shared between the access-control hook and
+// BaseFS.Chmod, which must apply the policy before its existence check so
+// refused paths never see the "write it first" message (ADR 0001).
+func checkWritable(h FSHandle) error {
 	resolver := h.Resolver()
 	switch resolver {
 	case RPackResolver:

@@ -116,6 +116,20 @@ func LoadRPack(ctx context.Context, ci *RPackConfigInstance, execPath string) (*
 
 	// Setup source path
 	packSourcePath := filepath.Join(packCachePath, RPackCacheDirSource)
+	// Cleanup source path first so the fetcher always starts from a
+	// non-existent destination. go-getter's git getter takes an "update"
+	// code path (git init/remote add/fetch/reset) when the destination
+	// already exists, which fails for sources without a pinned ref
+	// ("invalid ref: \"\""). Starting fresh always takes the clone path
+	// instead (same pattern as OpenTofu's module installer). For local
+	// file sources the path is a symlink; RemoveAll removes the link
+	// only, never the link target.
+	if _, err = os.Lstat(packSourcePath); err == nil {
+		err = os.RemoveAll(packSourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("could not cleanup source path %s: %w", packSourcePath, err)
+		}
+	}
 	// Do not create last part of path, since the fetcher is required to create it,
 	// since it creates symlinks for local references
 	err = os.MkdirAll(filepath.Dir(packSourcePath), 0o755) //nolint:gosec // intentional: standard directory permissions

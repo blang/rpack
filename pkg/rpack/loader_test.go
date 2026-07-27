@@ -1,11 +1,78 @@
 package rpack
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
+
+// gitRepoLocatorEnvVars mirrors the variables scrubbed by the getsource git
+// getter; duplicated here so this test also proves the scrub covers the
+// variables a poisoned environment would realistically set.
+var gitRepoLocatorEnvVars = []string{
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_COMMON_DIR",
+	"GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_NAMESPACE",
+	"GIT_QUARANTINE_PATH",
+}
+
+// runGit runs a git command with a sanitized environment (no repository
+// locator variables leaking in) and a fixed author/committer identity.
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cleanEnv := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if !slices.Contains(gitRepoLocatorEnvVars, name) {
+			cleanEnv = append(cleanEnv, entry)
+		}
+	}
+	cleanEnv = append(cleanEnv,
+		// Ignore user/system gitconfig so settings like commit.gpgsign
+		// cannot break the test fixtures.
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_AUTHOR_NAME=rpack-test",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=rpack-test",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	cmd := exec.Command("git", args...) //nolint:gosec // test helper with fixed args
+	cmd.Dir = dir
+	cmd.Env = cleanEnv
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %s\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// initGitRepo creates a git repository in dir with one commit containing the
+// given files (path -> content).
+func initGitRepo(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	runGit(t, dir, "init", "-b", "main")
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "initial commit")
+}
 
 func TestExtractPackageAddrSubDir_LocalPath(t *testing.T) {
 	pkgDir, subDir, err := extractPackageAddrSubDir("./some/local/module")
@@ -175,6 +242,130 @@ func TestResolveRPackInputs(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestLoadRPack_RefetchSources guards two regressions in the source cache
+// re-fetch path of LoadRPack:
+//
+//  1. Poisoned environment: with GIT_DIR/GIT_WORK_TREE set (e.g. rpack
+//     invoked from a git hook), go-getter's embedded git commands operated
+//     on that foreign repository instead of the source checkout, failing
+//     with "error: remote origin already exists" (or worse, mutating the
+//     foreign repository).
+//  2. Ref-less re-fetch: with the source cache dir present from a previous
+//     run, go-getter's git getter took its "update" code path, which fails
+//     for sources without a pinned ref with "invalid ref: \"\"". LoadRPack
+//     now cleans the source cache dir before every fetch so the clone path
+//     is always taken.
+//
+//nolint:gocognit // test: sequential scenario with subtests
+func TestLoadRPack_RefetchSources(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	// Source git repository containing a rpack definition and a subdirectory
+	// variant of it.
+	srcDir := t.TempDir()
+	initGitRepo(t, srcDir, map[string]string{
+		"rpack.yaml":     "\"@schema_version\": \"v1\"\nname: gitsrc\n",
+		"sub/rpack.yaml": "\"@schema_version\": \"v1\"\nname: gitsub\n",
+		"sub/data.txt":   "sub-data\n",
+	})
+
+	// The foreign repository the poisoned environment points at. It has an
+	// "origin" remote, so a hijacked "git remote add origin" would fail
+	// with "error: remote origin already exists".
+	foreignDir := t.TempDir()
+	initGitRepo(t, foreignDir, map[string]string{"keep.txt": "untouched\n"})
+	runGit(t, foreignDir, "remote", "add", "origin", "https://example.invalid/foreign.git")
+	foreignHead := runGit(t, foreignDir, "rev-parse", "HEAD")
+
+	// Simulate rpack being invoked from a git hook or a bare-repo/dotfiles
+	// setup exporting the repository locator variables.
+	t.Setenv("GIT_DIR", filepath.Join(foreignDir, ".git"))
+	t.Setenv("GIT_WORK_TREE", foreignDir)
+
+	newCI := func(execPath, source string) *RPackConfigInstance {
+		return &RPackConfigInstance{
+			ConfigPath:   filepath.Join(execPath, "app.rpack.yaml"),
+			Config:       &RPackConfig{SchemaVersion: RPackConfigCurrentSchemaVersion, Source: source, Config: &RPackConfigConfig{}},
+			LockFile:     NewRPackLockFile(),
+			LockFilePath: filepath.Join(execPath, "app.rpack.lock.yaml"),
+		}
+	}
+
+	assertFileContent := func(t *testing.T, path, want string) {
+		t.Helper()
+		content, err := os.ReadFile(path) //nolint:gosec // test uses TempDir
+		if err != nil {
+			t.Fatalf("expected fetched file %s: %s", path, err)
+		}
+		if string(content) != want {
+			t.Fatalf("unexpected content of %s: %q, want %q", path, content, want)
+		}
+	}
+
+	t.Run("git source refetch", func(t *testing.T) {
+		execPath := t.TempDir()
+		ci := newCI(execPath, "git::file://"+srcDir)
+		for i := range 2 {
+			inst, err := LoadRPack(context.Background(), ci, execPath)
+			if err != nil {
+				t.Fatalf("LoadRPack run %d failed: %s", i+1, err)
+			}
+			assertFileContent(t, filepath.Join(inst.SourcePath, "rpack.yaml"),
+				"\"@schema_version\": \"v1\"\nname: gitsrc\n")
+		}
+	})
+
+	t.Run("git source with subdir refetch", func(t *testing.T) {
+		execPath := t.TempDir()
+		ci := newCI(execPath, "git::file://"+srcDir+"//sub")
+		for i := range 2 {
+			inst, err := LoadRPack(context.Background(), ci, execPath)
+			if err != nil {
+				t.Fatalf("LoadRPack run %d failed: %s", i+1, err)
+			}
+			assertFileContent(t, filepath.Join(inst.SourcePath, "data.txt"), "sub-data\n")
+		}
+	})
+
+	t.Run("local source refetch keeps link target", func(t *testing.T) {
+		execPath := t.TempDir()
+		defDir := t.TempDir()
+		defFile := filepath.Join(defDir, "rpack.yaml")
+		defContent := "\"@schema_version\": \"v1\"\nname: localdef\n"
+		if err := os.WriteFile(defFile, []byte(defContent), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ci := newCI(execPath, defDir)
+		for i := range 2 {
+			inst, err := LoadRPack(context.Background(), ci, execPath)
+			if err != nil {
+				t.Fatalf("LoadRPack run %d failed: %s", i+1, err)
+			}
+			assertFileContent(t, filepath.Join(inst.SourcePath, "rpack.yaml"), defContent)
+		}
+		// The cache cleanup must remove only the symlink, never the target.
+		assertFileContent(t, defFile, defContent)
+	})
+
+	// The poisoned environment must have been restored.
+	if got := os.Getenv("GIT_DIR"); got != filepath.Join(foreignDir, ".git") {
+		t.Fatalf("GIT_DIR was not restored after LoadRPack, got %q", got)
+	}
+
+	// The foreign repository must be completely untouched.
+	if got := runGit(t, foreignDir, "rev-parse", "HEAD"); got != foreignHead {
+		t.Fatalf("foreign repository HEAD changed: %s -> %s", foreignHead, got)
+	}
+	if _, err := os.Stat(filepath.Join(foreignDir, ".git", "FETCH_HEAD")); !os.IsNotExist(err) {
+		t.Fatal("foreign repository has a FETCH_HEAD: a fetch was redirected into it")
+	}
+	if got := runGit(t, foreignDir, "status", "--porcelain"); got != "" {
+		t.Fatalf("foreign repository work tree modified:\n%s", got)
+	}
 }
 
 // TestLoadRPackFile_ConfigLessDoesNotPanic guards the nil-deref fixed in

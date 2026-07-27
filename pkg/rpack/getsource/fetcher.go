@@ -33,6 +33,12 @@ func DefaultFetcher() *Fetcher {
 
 // Fetch downloads the source at the given normalized address into destDir.
 // The sourceAddr must already be normalized (e.g. via NormalizeSource).
+//
+// For git sources destDir must not exist: go-getter's git getter switches
+// to an "update" code path (git init/fetch/reset) for existing
+// destinations, which fails for sources without a pinned ref
+// ("invalid ref: \"\""). LoadRPack enforces this by cleaning its source
+// cache directory before every fetch.
 func (f *Fetcher) Fetch(ctx context.Context, destDir, sourceAddr string) error {
 	// Build the complete getter map, adding dynamic entries
 	getters := make(map[string]getter.Getter, len(Getters)+3)

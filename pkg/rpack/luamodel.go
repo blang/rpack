@@ -21,9 +21,10 @@ type Resolver interface {
 // LuaModel encapsulates the Lua state, a Resolver, and tracks execution results.
 // It also holds external injected values.
 type LuaModel struct {
-	L         *lua.LState
-	fs        FS
-	extValues map[string]any // External values to expose (keys come from developer)
+	L          *lua.LState
+	fs         FS
+	definition *RPackDef
+	extValues  map[string]any // External values to expose (keys come from developer)
 }
 
 // NewLuaModel creates a Lua model using definition contract v1. Definition
@@ -34,7 +35,7 @@ func NewLuaModel(ctx context.Context, fs FS, initialData map[string]any) (*LuaMo
 	if err != nil {
 		return nil, err
 	}
-	return newLuaModelForDefinitionContract(ctx, fs, initialData, contract)
+	return newLuaModelForDefinitionContract(ctx, fs, initialData, contract, nil)
 }
 
 // newLuaModelForDefinitionContract creates a Lua model for one exact
@@ -47,13 +48,18 @@ func newLuaModelForDefinitionContract(
 	fs FS,
 	initialData map[string]any,
 	contract *DefinitionContract,
+	definition *RPackDef,
 ) (*LuaModel, error) {
 	if contract == nil {
 		return nil, fmt.Errorf("definition contract is nil")
 	}
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	L.SetContext(ctx)
-	if err := openLibs(L); err != nil {
+	if contract.openLuaLibraries == nil {
+		L.Close()
+		return nil, fmt.Errorf("definition contract %q has no Lua library opener", contract.version)
+	}
+	if err := contract.openLuaLibraries(L); err != nil {
 		L.Close()
 		return nil, err
 	}
@@ -63,9 +69,10 @@ func newLuaModelForDefinitionContract(
 		initialData = make(map[string]any)
 	}
 	lm := &LuaModel{
-		L:         L,
-		fs:        fs,
-		extValues: initialData,
+		L:          L,
+		fs:         fs,
+		definition: definition,
+		extValues:  initialData,
 	}
 	if err := lm.preloadRpackModule(contract); err != nil {
 		L.Close()
@@ -92,7 +99,7 @@ func (lm *LuaModel) Exec(script string) error {
 }
 
 // openLibs opens a standard set of Lua libraries.
-func openLibs(L *lua.LState) error {
+func openLibs(L *lua.LState, filepathLibrary lua.LGFunction) error {
 	libs := []struct {
 		name string
 		open lua.LGFunction
@@ -103,7 +110,7 @@ func openLibs(L *lua.LState) error {
 		{lua.StringLibName, lua.OpenString},
 		{lua.MathLibName, lua.OpenMath},
 		{lua.DebugLibName, lua.OpenDebug},
-		{"filepath", RegisterFilepath("filepath")},
+		{"filepath", filepathLibrary},
 	}
 	for _, lib := range libs {
 		if err := L.CallByParam(lua.P{
@@ -166,6 +173,14 @@ func definitionContractV1LuaFunctions(lm *LuaModel) map[string]lua.LGFunction {
 		"write_lines": lm.luaWriteLines,
 	}
 	maps.Copy(functions, NewRPackAPI(lm.fs).Funcs())
+	for key := range lm.extValues {
+		k := key
+		functions[k] = func(L *lua.LState) int {
+			checkLuaArity(L, 0, 0)
+			L.Push(goToLValue(L, lm.extValues[k]))
+			return 1
+		}
+	}
 	return functions
 }
 
@@ -184,17 +199,6 @@ func (lm *LuaModel) preloadRpackModule(contract *DefinitionContract) error {
 		// Set built-in functions.
 		for name, fun := range functions {
 			L.SetField(mod, name, L.NewFunction(fun))
-		}
-		// Register external data functions automatically.
-		// For each key in extValues, add a function that when called returns the conversion of the Go value.
-		for key := range lm.extValues {
-			// Capture the key using a local variable.
-			k := key
-			L.SetField(mod, k, L.NewFunction(func(L *lua.LState) int {
-				checkLuaArity(L, 0, 0)
-				L.Push(goToLValue(L, lm.extValues[k]))
-				return 1
-			}))
 		}
 		L.Push(mod)
 		return 1
@@ -369,7 +373,18 @@ func executeLuaWithDefinitionContract(
 	data map[string]any,
 	contract *DefinitionContract,
 ) error {
-	lm, err := newLuaModelForDefinitionContract(ctx, fs, data, contract)
+	return executeDefinitionLua(ctx, script, fs, data, contract, nil)
+}
+
+func executeDefinitionLua(
+	ctx context.Context,
+	script string,
+	fs FS,
+	data map[string]any,
+	contract *DefinitionContract,
+	definition *RPackDef,
+) error {
+	lm, err := newLuaModelForDefinitionContract(ctx, fs, data, contract, definition)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Lua environment: %w", err)
 	}

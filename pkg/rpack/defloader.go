@@ -31,13 +31,14 @@ func LoadRPackDef(name string) (*RPackDef, error) {
 			strings.Join(supportedDefinitionContractVersions(), ", "),
 		)
 	}
-	if _, err = definitionContractFor(header.SchemaVersion); err != nil {
+	contract, err := definitionContractFor(header.SchemaVersion)
+	if err != nil {
 		return nil, fmt.Errorf("invalid definition file %s: %w", name, err)
 	}
 
-	var c RPackDef
-	if err = yaml.UnmarshalStrict(b, &c); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal yaml in file %s: %w", name, err)
+	def, err := contract.decodeDefinition(b)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal yaml in file %s as contract %s: %w", name, contract.version, err)
 	}
-	return &c, nil
+	return def, nil
 }

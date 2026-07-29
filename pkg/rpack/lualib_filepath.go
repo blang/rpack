@@ -8,8 +8,12 @@ import (
 )
 
 func RegisterFilepath(name string) lua.LGFunction {
+	return registerFilepath(name, filepathFuncs)
+}
+
+func registerFilepath(name string, functions map[string]lua.LGFunction) lua.LGFunction {
 	return func(L *lua.LState) int {
-		tabmod := L.RegisterModule(name, filepathFuncs)
+		tabmod := L.RegisterModule(name, functions)
 		L.Push(tabmod)
 		return 1
 	}

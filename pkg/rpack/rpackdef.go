@@ -21,6 +21,8 @@ const (
 //
 //nolint:revive // intentional: RPack prefix is the domain convention
 type RPackDef struct {
+	contractDocument any
+
 	SchemaVersion string `json:"@schema_version"`
 
 	// Name of definition, required

@@ -27,6 +27,16 @@ func (m *mockFSHandle) ReadDir() (files, dirs []FSHandle, err error) {
 }
 func (m *mockFSHandle) Transfer(string) error { return nil }
 
+func TestNewRPackFSWithoutPurityDoesNotInstallNilHook(t *testing.T) {
+	fs := NewRPackFS(false, t.TempDir(), t.TempDir(), t.TempDir(), "", nil)
+	if err := fs.Write("output.txt", []byte("ok")); err != nil {
+		t.Fatalf("write with purity disabled: %v", err)
+	}
+	if err := fs.Check(); err != nil {
+		t.Fatalf("check with purity disabled: %v", err)
+	}
+}
+
 // TestRPackFSCheck tests the RPackFS.Check() method.
 // This is a regression test for the bug where Check() always returned an error
 // when PureCheck was non-nil, even when CheckConflicts() returned nil.

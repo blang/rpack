@@ -62,7 +62,7 @@ rpack.write("must-not-exist", "wrong contract")
 
 func TestUnsupportedDefinitionContractFailsBeforeLua(t *testing.T) {
 	defDir := writeDef(t, map[string]string{
-		"rpack.yaml": "\"@schema_version\": \"v2\"\nname: \"future\"\n",
+		"rpack.yaml": "\"@schema_version\": \"v999\"\nname: \"future\"\n",
 		"script.lua": `
 local rpack = require("rpack.v1")
 rpack.write("must-not-exist", "script should not run")
@@ -70,7 +70,7 @@ rpack.write("must-not-exist", "script should not run")
 	})
 	target := t.TempDir()
 	err := runDirect(t, &Executor{}, defDir, nil, target)
-	if err == nil || !strings.Contains(err.Error(), `unsupported rpack definition contract "v2"`) {
+	if err == nil || !strings.Contains(err.Error(), `unsupported rpack definition contract "v999"`) {
 		t.Fatalf("expected unsupported-contract error, got: %v", err)
 	}
 	if errors.Is(err, ErrLuaExecution) {

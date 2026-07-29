@@ -250,17 +250,21 @@ func ValidateRPackDef(defDir string) (*RPackDef, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not load rpack definition file %s: %w", defPath, err)
 	}
-	if err := def.ValidateSchema(); err != nil {
-		return nil, fmt.Errorf("definition schema validation failed: %s: %w", defPath, err)
+	if validateErr := def.ValidateSchema(); validateErr != nil {
+		return nil, fmt.Errorf("definition schema validation failed: %s: %w", defPath, validateErr)
 	}
-	// Check optional schema.cue is parseable
+	contract, err := definitionContractFor(def.SchemaVersion)
+	if err != nil {
+		return nil, err
+	}
+	// Check optional schema.cue is parseable under the selected contract.
 	schemaFile := filepath.Join(defDir, RPackDefSchemaFilename)
 	if _, statErr := os.Stat(schemaFile); statErr == nil {
 		b, readErr := os.ReadFile(schemaFile) //nolint:gosec // intentional: path comes from user config
 		if readErr != nil {
 			return nil, fmt.Errorf("failed to open schema file: %s: %w", schemaFile, readErr)
 		}
-		if _, cueErr := NewCueValidator(b, RPackDefSchemaName); cueErr != nil {
+		if _, cueErr := contract.newConfigValidator(b, RPackDefSchemaName); cueErr != nil {
 			return nil, fmt.Errorf("could not create validation context from path %s in schema file %s: %w", RPackDefSchemaName, schemaFile, cueErr)
 		}
 	}
@@ -291,7 +295,7 @@ func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("failed to open schema file: %s: %w", schemaFile, readErr)
 		}
-		vc, readErr = NewCueValidator(b, RPackDefSchemaName)
+		vc, readErr = contract.newConfigValidator(b, RPackDefSchemaName)
 		if readErr != nil {
 			return nil, fmt.Errorf("could not create validation context from path %s in schema file %s: %w", RPackDefSchemaName, schemaFile, readErr)
 		}

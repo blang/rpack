@@ -59,11 +59,11 @@ func NewRPackFS(enforcePure bool, defSourcePath, runPath, tempPath, execPath str
 	}
 
 	recorder := NewFSRecorder(nil)
-	hooks := []FSAccessHook{
-		&RPackAccessControlFSHook{},
-		pureCheck,
-		recorder,
+	hooks := []FSAccessHook{&RPackAccessControlFSHook{}}
+	if pureCheck != nil {
+		hooks = append(hooks, pureCheck)
 	}
+	hooks = append(hooks, recorder)
 
 	return &RPackFS{
 		BaseFS: &BaseFS{

@@ -130,7 +130,7 @@ func (e *Executor) execCore(ctx context.Context,
 	}
 
 	// Execute Lua using the exact contract selected by rpack.yaml.
-	if err = executeLuaWithDefinitionContract(ctx, string(scriptBytes), fs, externalData, definst.contract); err != nil {
+	if err = executeDefinitionLua(ctx, string(scriptBytes), fs, externalData, definst.contract, definst.Def); err != nil {
 		return fs, nil, fmt.Errorf("failed to execute script: %w: %w", ErrLuaExecution, err)
 	}
 	slog.Debug("Script execution successful")

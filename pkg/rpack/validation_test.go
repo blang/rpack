@@ -34,6 +34,16 @@ func TestCueValidator(t *testing.T) {
 	}
 }
 
+func TestCueValidatorRejectsMissingRequiredField(t *testing.T) {
+	validator, err := NewCueValidator([]byte(`#Schema: { required!: string }`), "#Schema")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = validator.Validate(map[string]any{}); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("expected missing-required-field error, got: %v", err)
+	}
+}
+
 func TestEmptyValidator(t *testing.T) {
 	v := &EmptyValidator{}
 	err := v.Validate(nil)

@@ -1,6 +1,7 @@
 package rpack
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,10 +21,10 @@ func writeDefinitionFile(t *testing.T, content string) string {
 
 func TestLoadRPackDef_RejectsUnsupportedContractFromHeader(t *testing.T) {
 	// unknown_future_field proves version selection happens from the small raw
-	// header before strict full-document decoding. A v1-only runtime must report
-	// the unsupported v2 contract, not try to interpret v2 using the v1 shape.
+	// header before strict full-document decoding. The runtime must report the
+	// unknown contract, not try to interpret it using a supported shape.
 	path := writeDefinitionFile(t, `
-"@schema_version": "v2"
+"@schema_version": "v999"
 name: "future"
 unknown_future_field: true
 `)
@@ -32,7 +33,7 @@ unknown_future_field: true
 	if err == nil {
 		t.Fatal("expected unsupported-contract error")
 	}
-	if !strings.Contains(err.Error(), `unsupported rpack definition contract "v2"`) {
+	if !strings.Contains(err.Error(), `unsupported rpack definition contract "v999"`) {
 		t.Fatalf("expected explicit unsupported-contract error, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "supported: v1") {
@@ -90,17 +91,46 @@ name: "second"
 }
 
 func TestRPackDefValidateSchema_RejectsUnsupportedContract(t *testing.T) {
-	def := &RPackDef{SchemaVersion: "v2", Name: "future"}
+	def := &RPackDef{SchemaVersion: "v999", Name: "future"}
 	if err := def.ValidateSchema(); err == nil ||
-		!strings.Contains(err.Error(), `unsupported rpack definition contract "v2"`) {
+		!strings.Contains(err.Error(), `unsupported rpack definition contract "v999"`) {
 		t.Fatalf("expected explicit unsupported-contract error, got: %v", err)
+	}
+}
+
+func TestExecuteLuaWithDefinitionContract_UsesSelectedLuaLibraries(t *testing.T) {
+	contract := &DefinitionContract{
+		version:       "test-libraries",
+		luaModuleName: "rpack.test-libraries",
+		openLuaLibraries: func(L *lua.LState) error {
+			functions := make(map[string]lua.LGFunction, len(filepathFuncs)+1)
+			maps.Copy(functions, filepathFuncs)
+			functions["contract_marker"] = func(L *lua.LState) int {
+				checkLuaArity(L, 0, 0)
+				L.Push(lua.LString("selected-library"))
+				return 1
+			}
+			return openLibs(L, registerFilepath("filepath", functions))
+		},
+		luaFunctions: func(_ *LuaModel) map[string]lua.LGFunction {
+			return map[string]lua.LGFunction{}
+		},
+	}
+
+	err := executeLuaWithDefinitionContract(t.Context(), `
+local filepath = require("filepath")
+assert(filepath.contract_marker() == "selected-library")
+`, NewInMemoryFS(), nil, contract)
+	if err != nil {
+		t.Fatalf("selected libraries should execute: %v", err)
 	}
 }
 
 func TestExecuteLuaWithDefinitionContract_PreloadsOnlySelectedModule(t *testing.T) {
 	contract := &DefinitionContract{
-		version:       "test",
-		luaModuleName: "rpack.test",
+		version:          "test",
+		luaModuleName:    "rpack.test",
+		openLuaLibraries: definitionContractV1LuaLibraries,
 		luaFunctions: func(_ *LuaModel) map[string]lua.LGFunction {
 			return map[string]lua.LGFunction{
 				"marker": func(L *lua.LState) int {

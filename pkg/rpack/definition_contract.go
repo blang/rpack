@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
+	"sigs.k8s.io/yaml"
 )
 
 const definitionContractV1 = "v1"
@@ -14,11 +15,14 @@ const definitionContractV1 = "v1"
 // an rpack definition. Keeping the selected contract as one object prevents
 // version checks from spreading through loading and execution code.
 type DefinitionContract struct {
-	definitionSchema SchemaValidator
-	luaFunctions     func(*LuaModel) map[string]lua.LGFunction
-	newFS            func(*definitionFSConfig) *RPackFS
-	version          string
-	luaModuleName    string
+	definitionSchema   SchemaValidator
+	decodeDefinition   func([]byte) (*RPackDef, error)
+	newConfigValidator func([]byte, string) (SchemaValidator, error)
+	openLuaLibraries   func(*lua.LState) error
+	luaFunctions       func(*LuaModel) map[string]lua.LGFunction
+	newFS              func(*definitionFSConfig) *RPackFS
+	version            string
+	luaModuleName      string
 }
 
 type definitionFSConfig struct {
@@ -32,11 +36,14 @@ type definitionFSConfig struct {
 
 var definitionContracts = newDefinitionContractRegistry(
 	&DefinitionContract{
-		version:          definitionContractV1,
-		definitionSchema: RPackDefSchemaValidator,
-		luaModuleName:    "rpack.v1",
-		luaFunctions:     definitionContractV1LuaFunctions,
-		newFS:            definitionContractV1FS,
+		version:            definitionContractV1,
+		definitionSchema:   RPackDefSchemaValidator,
+		decodeDefinition:   decodeDefinitionContractV1,
+		newConfigValidator: definitionContractV1ConfigValidator,
+		openLuaLibraries:   definitionContractV1LuaLibraries,
+		luaModuleName:      "rpack.v1",
+		luaFunctions:       definitionContractV1LuaFunctions,
+		newFS:              definitionContractV1FS,
 	},
 )
 
@@ -62,6 +69,15 @@ func validateDefinitionContract(contract *DefinitionContract) {
 	if contract.definitionSchema == nil {
 		panic(fmt.Sprintf("definition contract %q has no definition schema", contract.version))
 	}
+	if contract.decodeDefinition == nil {
+		panic(fmt.Sprintf("definition contract %q has no definition decoder", contract.version))
+	}
+	if contract.newConfigValidator == nil {
+		panic(fmt.Sprintf("definition contract %q has no config validator factory", contract.version))
+	}
+	if contract.openLuaLibraries == nil {
+		panic(fmt.Sprintf("definition contract %q has no Lua library opener", contract.version))
+	}
 	if contract.luaModuleName == "" {
 		panic(fmt.Sprintf("definition contract %q has no Lua module", contract.version))
 	}
@@ -71,6 +87,22 @@ func validateDefinitionContract(contract *DefinitionContract) {
 	if contract.newFS == nil {
 		panic(fmt.Sprintf("definition contract %q has no filesystem factory", contract.version))
 	}
+}
+
+func decodeDefinitionContractV1(data []byte) (*RPackDef, error) {
+	var def RPackDef
+	if err := yaml.UnmarshalStrict(data, &def); err != nil {
+		return nil, err
+	}
+	return &def, nil
+}
+
+func definitionContractV1ConfigValidator(data []byte, path string) (SchemaValidator, error) {
+	return NewCueValidator(data, path)
+}
+
+func definitionContractV1LuaLibraries(state *lua.LState) error {
+	return openLibs(state, RegisterFilepath("filepath"))
 }
 
 func definitionContractV1FS(config *definitionFSConfig) *RPackFS {
@@ -105,7 +137,11 @@ func supportedDefinitionContractVersions() []string {
 }
 
 func (c *DefinitionContract) validateDefinition(def *RPackDef) error {
-	if err := c.definitionSchema.Validate(def); err != nil {
+	document := any(def)
+	if def.contractDocument != nil {
+		document = def.contractDocument
+	}
+	if err := c.definitionSchema.Validate(document); err != nil {
 		return fmt.Errorf("validating rpack definition failed: %w", err)
 	}
 	return nil

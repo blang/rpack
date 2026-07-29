@@ -63,7 +63,7 @@ func NewCueValidator(schemaBytes []byte, path string) (*CueValidator, error) {
 func (c *CueValidator) Validate(x any) error {
 	asCue := c.Context.Encode(x)
 	unified := c.Schema.Unify(asCue)
-	if vErr := unified.Validate(); vErr != nil {
+	if vErr := unified.Validate(cue.Concrete(true)); vErr != nil {
 		return formatCueErrors(vErr)
 	}
 	return nil

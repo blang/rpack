@@ -225,6 +225,7 @@ const (
 type RPackDefInstance struct {
 	ConfigValidator SchemaValidator
 	Def             *RPackDef
+	contract        *DefinitionContract
 	Source          string
 	ScriptPath      string
 }
@@ -278,6 +279,10 @@ func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
 	if err != nil {
 		return nil, err
 	}
+	contract, err := definitionContractFor(def.SchemaVersion)
+	if err != nil {
+		return nil, err
+	}
 
 	var vc SchemaValidator
 	schemaFile := filepath.Join(source, RPackDefSchemaFilename)
@@ -300,5 +305,6 @@ func SetupRPackDefInstance(source string) (*RPackDefInstance, error) {
 		Def:             def,
 		ConfigValidator: vc,
 		ScriptPath:      scriptPath,
+		contract:        contract,
 	}, nil
 }

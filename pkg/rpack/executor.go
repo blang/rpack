@@ -108,8 +108,14 @@ func (e *Executor) execCore(ctx context.Context,
 		return nil, nil, fmt.Errorf("validation of inputs failed: %w: %w", ErrInputValidation, err)
 	}
 
-	// Setup filesystem for file access.
-	fs := NewRPackFS(true, defDir, runDir, tempDir, "", resolvedInputs)
+	// Setup filesystem behavior through the selected definition contract.
+	fs := definst.contract.newFS(&definitionFSConfig{
+		enforcePure:    true,
+		defSourcePath:  defDir,
+		runPath:        runDir,
+		tempPath:       tempDir,
+		resolvedInputs: resolvedInputs,
+	})
 
 	// Setup external data
 	externalData := map[string]any{
@@ -123,8 +129,8 @@ func (e *Executor) execCore(ctx context.Context,
 		return nil, nil, fmt.Errorf("failed to open script file: %s: %w", definst.ScriptPath, err)
 	}
 
-	// Execute lua in context and capture changed files
-	if err = ExecuteLuaWithData(ctx, string(scriptBytes), fs, externalData); err != nil {
+	// Execute Lua using the exact contract selected by rpack.yaml.
+	if err = executeLuaWithDefinitionContract(ctx, string(scriptBytes), fs, externalData, definst.contract); err != nil {
 		return fs, nil, fmt.Errorf("failed to execute script: %w: %w", ErrLuaExecution, err)
 	}
 	slog.Debug("Script execution successful")

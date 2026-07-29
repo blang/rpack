@@ -58,6 +58,7 @@ func (a *RPackAPI) RegisterFunc(name string) lua.LGFunction {
 }
 
 func (a *RPackAPI) luaCopy(L *lua.LState) int {
+	checkLuaArity(L, 2, 3)
 	in := L.CheckString(1)
 	out := L.CheckString(2)
 	mode, hasMode := checkOptsMode(L, 3)
@@ -76,6 +77,7 @@ func (a *RPackAPI) luaCopy(L *lua.LState) int {
 }
 
 func (a *RPackAPI) luaWrite(L *lua.LState) int {
+	checkLuaArity(L, 2, 3)
 	friendly := L.CheckString(1)
 	content := L.CheckString(2)
 	mode, hasMode := checkOptsMode(L, 3)
@@ -91,6 +93,7 @@ func (a *RPackAPI) luaWrite(L *lua.LState) int {
 // luaChmod implements rpack.chmod(path, mode) (ADR 0001). It amends the mode
 // of an already-staged file; a later write resets the mode to 0644.
 func (a *RPackAPI) luaChmod(L *lua.LState) int {
+	checkLuaArity(L, 2, 2)
 	friendly := L.CheckString(1)
 	mode := checkModeArg(L, 2)
 	if err := a.fs.Chmod(friendly, mode); err != nil {
@@ -163,6 +166,7 @@ func checkOptsMode(L *lua.LState, n int) (mode os.FileMode, hasMode bool) {
 }
 
 func (a *RPackAPI) luaRead(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	friendly := L.CheckString(1)
 	b, err := a.fs.Read(friendly)
 	if err != nil {
@@ -174,8 +178,9 @@ func (a *RPackAPI) luaRead(L *lua.LState) int {
 }
 
 func (a *RPackAPI) luaReadDir(L *lua.LState) int {
+	checkLuaArity(L, 1, 2)
 	friendly := L.CheckString(1)
-	recursive := L.CheckBool(2)
+	recursive := L.OptBool(2, false)
 	var files []string
 	var dirs []string
 	var err error
@@ -194,6 +199,7 @@ func (a *RPackAPI) luaReadDir(L *lua.LState) int {
 }
 
 func luaFromJSON(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	input := L.CheckString(1)
 	var data any
 	if err := json.Unmarshal([]byte(input), &data); err != nil {
@@ -206,6 +212,7 @@ func luaFromJSON(L *lua.LState) int {
 
 // luaToJSON marshals a Lua table as JSON and writes it out.
 func luaToJSON(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	val := L.CheckTable(1)
 	goVal := luaTableToGo(val)
 	jsonBytes, err := json.MarshalIndent(goVal, "", "  ")
@@ -218,6 +225,7 @@ func luaToJSON(L *lua.LState) int {
 }
 
 func luaFromYAML(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	input := L.CheckString(1)
 	var data any
 	if err := yaml.Unmarshal([]byte(input), &data); err != nil {
@@ -229,6 +237,7 @@ func luaFromYAML(L *lua.LState) int {
 }
 
 func luaToYAML(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	val := L.CheckTable(1)
 	goVal := luaTableToGo(val)
 	yamlBytes, err := yaml.Marshal(goVal)
@@ -244,6 +253,7 @@ func luaToYAML(L *lua.LState) int {
 // executes it with the provided Lua data (converted to a Go value), and returns the result.
 // It supports optional start and end delimiters.
 func luaTemplate(L *lua.LState) int {
+	checkLuaArity(L, 2, 4)
 	tplContent := L.CheckString(1)
 	dataTable := L.CheckTable(2)
 	data := luaTableToGo(dataTable)
@@ -271,6 +281,7 @@ func luaTemplate(L *lua.LState) int {
 // luaJQ executes a gojq (https://github.com/itchyny/gojq) query
 // on the provided data.
 func luaJQ(L *lua.LState) int {
+	checkLuaArity(L, 2, 2)
 	queryStr := L.CheckString(1)
 	val := L.CheckTable(2)
 	goVal := luaTableToGo(val)

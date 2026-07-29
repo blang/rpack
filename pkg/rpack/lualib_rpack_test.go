@@ -1,6 +1,8 @@
 package rpack
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -165,7 +167,25 @@ func TestRPackAPIToAndFromYAML(t *testing.T) {
 	}
 }
 
-// TODO: Create test for read_dir
+func TestRPackAPIReadDirDefaultsToNonRecursive(t *testing.T) {
+	defDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(defDir, "dir"), 0o750); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(defDir, "dir", "file.txt"), []byte("x"), 0o600); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+	fs := NewRPackFS(true, defDir, t.TempDir(), t.TempDir(), "", nil)
+	err := ExecuteLuaWithData(t.Context(), `
+local rpack = require("rpack.v1")
+local files, dirs = rpack.read_dir("rpack:dir")
+assert(type(files) == "table")
+assert(type(dirs) == "table")
+`, fs, nil)
+	if err != nil {
+		t.Fatalf("read_dir without recursive argument: %v", err)
+	}
+}
 
 func TestRPackTemplate(t *testing.T) {
 	L := lua.NewState(lua.Options{SkipOpenLibs: false})
@@ -365,6 +385,52 @@ func TestRPackAPIOptsErrors(t *testing.T) {
 			err := L.DoString(tc.script)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestDefinitionContractV1RejectsExtraLuaArguments(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    string
+		wantErr string
+	}{
+		{name: "copy", call: `rpack.copy("source", "copy", {}, "extra")`, wantErr: "expected 2 to 3 arguments, got 4"},
+		{name: "chmod", call: `rpack.chmod("source", "755", "extra")`, wantErr: "expected 2 arguments, got 3"},
+		{name: "from_json", call: `rpack.from_json("{}", "extra")`, wantErr: "expected 1 argument, got 2"},
+		{name: "to_json", call: `rpack.to_json({}, "extra")`, wantErr: "expected 1 argument, got 2"},
+		{name: "from_yaml", call: `rpack.from_yaml("a: b", "extra")`, wantErr: "expected 1 argument, got 2"},
+		{name: "to_yaml", call: `rpack.to_yaml({}, "extra")`, wantErr: "expected 1 argument, got 2"},
+		{name: "write missing content", call: `rpack.write("output")`, wantErr: "expected 2 to 3 arguments, got 1"},
+		{name: "write extra", call: `rpack.write("output", "x", {}, "extra")`, wantErr: "expected 2 to 3 arguments, got 4"},
+		{name: "read", call: `rpack.read("source", "extra")`, wantErr: "expected 1 argument, got 2"},
+		{name: "read_dir", call: `rpack.read_dir("dir", false, "extra")`, wantErr: "expected 1 to 2 arguments, got 3"},
+		{name: "template", call: `rpack.template("{{.x}}", {x = "x"}, "{{", "}}", "extra")`, wantErr: "expected 2 to 4 arguments, got 5"},
+		{name: "jq", call: `rpack.jq(".", {}, "extra")`, wantErr: "expected 2 arguments, got 3"},
+		{name: "read_lines", call: `rpack.read_lines("source", "extra")`, wantErr: "expected 1 argument, got 2"},
+		{name: "write_lines", call: `rpack.write_lines("output", {"x"}, "\n", true, "extra")`, wantErr: "expected 2 to 4 arguments, got 5"},
+		{name: "injected values", call: `rpack.values("extra")`, wantErr: "expected 0 arguments, got 1"},
+		{name: "injected inputs", call: `rpack.inputs("extra")`, wantErr: "expected 0 arguments, got 1"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := NewInMemoryFS()
+			if err := fs.Write("source", []byte("x")); err != nil {
+				t.Fatal(err)
+			}
+			fs.Mkdir("dir")
+			script := `local rpack = require("rpack.v1"); ` + tc.call
+			err := ExecuteLuaWithData(t.Context(), script, fs, map[string]any{
+				"values": map[string]any{},
+				"inputs": []string{},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+			if _, exists := fs.Tree["output"]; exists {
+				t.Fatal("function performed a write before rejecting extra arguments")
 			}
 		})
 	}

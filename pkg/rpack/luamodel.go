@@ -26,12 +26,31 @@ type LuaModel struct {
 	extValues map[string]any // External values to expose (keys come from developer)
 }
 
-// NewLuaModel creates a new LuaModel instance with a new Lua state,
-// opens a minimal set of libraries and preloads the versioned "rpack.v1" module.
-// The additional parameter initialData contains external values to be injected.
+// NewLuaModel creates a Lua model using definition contract v1. Definition
+// execution uses newLuaModelForDefinitionContract so the definition's selected
+// contract controls the available module and behavior.
+func NewLuaModel(ctx context.Context, fs FS, initialData map[string]any) (*LuaModel, error) {
+	contract, err := definitionContractFor(definitionContractV1)
+	if err != nil {
+		return nil, err
+	}
+	return newLuaModelForDefinitionContract(ctx, fs, initialData, contract)
+}
+
+// newLuaModelForDefinitionContract creates a Lua model for one exact
+// definition contract. The additional parameter initialData contains external
+// values to be injected.
 //
 // TODO: Provide an error function to lua code
-func NewLuaModel(ctx context.Context, fs FS, initialData map[string]any) (*LuaModel, error) {
+func newLuaModelForDefinitionContract(
+	ctx context.Context,
+	fs FS,
+	initialData map[string]any,
+	contract *DefinitionContract,
+) (*LuaModel, error) {
+	if contract == nil {
+		return nil, fmt.Errorf("definition contract is nil")
+	}
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	L.SetContext(ctx)
 	if err := openLibs(L); err != nil {
@@ -48,7 +67,10 @@ func NewLuaModel(ctx context.Context, fs FS, initialData map[string]any) (*LuaMo
 		fs:        fs,
 		extValues: initialData,
 	}
-	lm.preloadRpackModule()
+	if err := lm.preloadRpackModule(contract); err != nil {
+		L.Close()
+		return nil, err
+	}
 
 	if err := sandbox(L); err != nil {
 		L.Close()
@@ -138,26 +160,25 @@ func loLoaderPreload(L *lua.LState) int {
 	return 1
 }
 
-// preloadRpackModule preloads the module under "rpack.v1" so that scripts can
-// load it via: local rpack = require("rpack.v1")
-func (lm *LuaModel) preloadRpackModule() {
+func definitionContractV1LuaFunctions(lm *LuaModel) map[string]lua.LGFunction {
 	functions := map[string]lua.LGFunction{
-		// "copy": lm.luaCopy,
-		// "read_dir": lm.luaReadDir,
-		// "read_yaml":  lm.luaReadYAML,
-		// "write_yaml": lm.luaWriteYAML,
-		// "from_json":   lm.luaFromJSON,
-		// "write_json":  lm.luaWriteJSON,
 		"read_lines":  lm.luaReadLines,
 		"write_lines": lm.luaWriteLines,
-		// "read":        lm.luaReadString,
-		// "write":       lm.luaWriteString,
-		// "template": lm.luaTemplateString,
-		// "jq": lm.luaJQ,
 	}
-	rpackAPI := NewRPackAPI(lm.fs)
-	rpackAPIFuncs := rpackAPI.Funcs()
-	maps.Copy(functions, rpackAPIFuncs)
+	maps.Copy(functions, NewRPackAPI(lm.fs).Funcs())
+	return functions
+}
+
+// preloadRpackModule preloads only the module selected by the definition
+// contract. It deliberately does not expose other supported contract modules.
+func (lm *LuaModel) preloadRpackModule(contract *DefinitionContract) error {
+	if contract.luaModuleName == "" {
+		return fmt.Errorf("definition contract %q has no Lua module", contract.version)
+	}
+	if contract.luaFunctions == nil {
+		return fmt.Errorf("definition contract %q has no Lua functions", contract.version)
+	}
+	functions := contract.luaFunctions(lm)
 	loader := func(L *lua.LState) int {
 		mod := L.NewTable()
 		// Set built-in functions.
@@ -170,6 +191,7 @@ func (lm *LuaModel) preloadRpackModule() {
 			// Capture the key using a local variable.
 			k := key
 			L.SetField(mod, k, L.NewFunction(func(L *lua.LState) int {
+				checkLuaArity(L, 0, 0)
 				L.Push(goToLValue(L, lm.extValues[k]))
 				return 1
 			}))
@@ -177,11 +199,13 @@ func (lm *LuaModel) preloadRpackModule() {
 		L.Push(mod)
 		return 1
 	}
-	lm.L.PreloadModule("rpack.v1", loader)
+	lm.L.PreloadModule(contract.luaModuleName, loader)
+	return nil
 }
 
 // luaReadLines reads a file returning a table with lines, separator, and finalNewline.
 func (lm *LuaModel) luaReadLines(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	friendly := L.CheckString(1)
 	contentBytes, err := lm.fs.Read(friendly)
 	if err != nil {
@@ -212,6 +236,7 @@ func (lm *LuaModel) luaReadLines(L *lua.LState) int {
 
 // luaWriteLines writes lines to a file with the given separator and final newline option.
 func (lm *LuaModel) luaWriteLines(L *lua.LState) int {
+	checkLuaArity(L, 2, 4)
 	friendly := L.CheckString(1)
 	linesTbl := L.CheckTable(2)
 	sep := L.OptString(3, "\n")
@@ -328,9 +353,23 @@ func lValueToGo(val lua.LValue) any {
 	}
 }
 
-// ExecuteLuaWithData creates a LuaModel passing in external data, runs the script, and returns the LuaResult.
+// ExecuteLuaWithData executes a script using definition contract v1.
 func ExecuteLuaWithData(ctx context.Context, script string, fs FS, data map[string]any) error {
-	lm, err := NewLuaModel(ctx, fs, data)
+	contract, err := definitionContractFor(definitionContractV1)
+	if err != nil {
+		return err
+	}
+	return executeLuaWithDefinitionContract(ctx, script, fs, data, contract)
+}
+
+func executeLuaWithDefinitionContract(
+	ctx context.Context,
+	script string,
+	fs FS,
+	data map[string]any,
+	contract *DefinitionContract,
+) error {
+	lm, err := newLuaModelForDefinitionContract(ctx, fs, data, contract)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Lua environment: %w", err)
 	}

@@ -5,7 +5,7 @@
 --
 -- Output file handles allow `temp:file`, `./dir/myfile` (target location)
 -- Input file handles can be `map:mapped-file`, `map:mapped-dir/myfile`, `temp:dir/file`, `rpack:dir/file-from-rpack-source`.
--- @module rpack
+-- @module rpack.v1
 
 local rpack = {}
 
@@ -13,7 +13,7 @@ local rpack = {}
 --- Not all inputs specified in RPackDef must be configured by the user.
 --- Can be prefixed with `map:` to use as a file handle, e.g. input: my-file -> map:my-file
 --- @return result Array of user supplied inputs names.
-function rpack.rpack.inputs() end
+function rpack.inputs() end
 
 --- User configured values.
 --- The deserialized user supplied config for the RPack.
@@ -54,7 +54,7 @@ function rpack.to_yaml(tbl) end
 --- Convert json to table
 --- @param str string The json in string format
 --- @return table Deserialized json structure.
-function rpack.from_json(file) end
+function rpack.from_json(str) end
 
 --- Convert table to json
 --- @param tbl table The table to convert into json str
@@ -67,6 +67,13 @@ function rpack.to_json(tbl) end
 --- @param file string The file to read from.
 --- @return table {lines: []string, separator: string, finalNewLine: bool}
 function rpack.read_lines(file) end
+
+--- List files and directories under a path.
+--- @param path string The directory to list.
+--- @param[opt=false] recursive boolean Whether to recurse into subdirectories.
+--- @return table Array of file paths.
+--- @return table Array of directory paths.
+function rpack.read_dir(path, recursive) end
 
 --- Write lines to file
 --- @param file string The file to write to.

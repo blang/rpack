@@ -28,6 +28,7 @@ var filepathFuncs = map[string]lua.LGFunction{
 }
 
 func luaFilepathBase(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	base := filepath.Base(path)
 	L.Push(lua.LString(base))
@@ -35,6 +36,7 @@ func luaFilepathBase(L *lua.LState) int {
 }
 
 func luaFilepathClean(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	ret := filepath.Clean(path)
 	L.Push(lua.LString(ret))
@@ -42,6 +44,7 @@ func luaFilepathClean(L *lua.LState) int {
 }
 
 func luaFilepathDir(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	ret := filepath.Dir(path)
 	L.Push(lua.LString(ret))
@@ -49,6 +52,7 @@ func luaFilepathDir(L *lua.LState) int {
 }
 
 func luaFilepathExt(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	ret := filepath.Ext(path)
 	L.Push(lua.LString(ret))
@@ -56,6 +60,7 @@ func luaFilepathExt(L *lua.LState) int {
 }
 
 func luaFilepathIsAbs(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	ret := filepath.IsAbs(path)
 	L.Push(lua.LBool(ret))
@@ -63,6 +68,7 @@ func luaFilepathIsAbs(L *lua.LState) int {
 }
 
 func luaFilepathIsLocal(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	ret := filepath.IsLocal(path)
 	L.Push(lua.LBool(ret))
@@ -70,6 +76,7 @@ func luaFilepathIsLocal(L *lua.LState) int {
 }
 
 func luaFilepathJoin(L *lua.LState) int {
+	checkLuaArity(L, 2, -1)
 	var args []string
 	first := L.CheckString(1)
 	second := L.CheckString(2)
@@ -84,6 +91,7 @@ func luaFilepathJoin(L *lua.LState) int {
 }
 
 func luaFilepathSplit(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	dir, file := filepath.Split(path)
 	L.Push(lua.LString(dir))
@@ -92,6 +100,7 @@ func luaFilepathSplit(L *lua.LState) int {
 }
 
 func luaFilepathLocation(L *lua.LState) int {
+	checkLuaArity(L, 1, 1)
 	path := L.CheckString(1)
 	before, after, found := strings.Cut(path, ":")
 	if found {

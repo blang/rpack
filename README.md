@@ -193,6 +193,12 @@ config:
     "users.yaml": ./myusers.yaml
 ```
 
+## Definition contract compatibility
+
+A definition's `@schema_version` selects its complete execution contract: the accepted `rpack.yaml` shape, the matching Lua module, and filesystem behavior. The versions must match—for example, schema `v1` uses `require("rpack.v1")`. Unsupported contracts are rejected before Lua runs, and unknown YAML fields or Lua arguments are rejected rather than ignored.
+
+Definition contract v1 remains unstable while the rpack binary is `0.x`; it may still gain or refine behavior. It will be frozen when rpack `v1.0.0` is released. After that, new definition behavior will use a new contract version while newer runtimes retain the v1 adapter. Definitions do not declare a separate minimum rpack binary version. See the [definition contract versioning proposal](./docs/proposals/2026-07-28-stable-definition-contract-versioning.md).
+
 ## Lua API
 
 The `rpack.v1` module is the scripting interface:

@@ -1,6 +1,7 @@
 package rpack
 
 import (
+	"strings"
 	"testing"
 
 	lua "github.com/yuin/gopher-lua"
@@ -119,6 +120,17 @@ func TestFilepathJoin(t *testing.T) {
 	}
 }
 
+func TestDefinitionContractV1FilepathJoinRequiresTwoArguments(t *testing.T) {
+	L := lua.NewState(lua.Options{SkipOpenLibs: false})
+	defer L.Close()
+	L.SetContext(t.Context())
+	L.SetGlobal("fn", L.NewFunction(luaFilepathJoin))
+	err := L.DoString(`fn("only-one")`)
+	if err == nil || !strings.Contains(err.Error(), "expected at least 2 arguments, got 1") {
+		t.Fatalf("expected minimum-arity error, got %v", err)
+	}
+}
+
 func TestFilepathSplit(t *testing.T) {
 	L := lua.NewState(lua.Options{SkipOpenLibs: false})
 	defer L.Close()
@@ -133,6 +145,34 @@ func TestFilepathSplit(t *testing.T) {
 	`
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
+	}
+}
+
+func TestDefinitionContractV1FilepathFunctionsRejectExtraArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   lua.LGFunction
+	}{
+		{name: "base", fn: luaFilepathBase},
+		{name: "clean", fn: luaFilepathClean},
+		{name: "dir", fn: luaFilepathDir},
+		{name: "ext", fn: luaFilepathExt},
+		{name: "isAbs", fn: luaFilepathIsAbs},
+		{name: "isLocal", fn: luaFilepathIsLocal},
+		{name: "split", fn: luaFilepathSplit},
+		{name: "location", fn: luaFilepathLocation},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			L := lua.NewState(lua.Options{SkipOpenLibs: false})
+			defer L.Close()
+			L.SetContext(t.Context())
+			L.SetGlobal("fn", L.NewFunction(tc.fn))
+			err := L.DoString(`fn("path", "extra")`)
+			if err == nil || !strings.Contains(err.Error(), "expected 1 argument, got 2") {
+				t.Fatalf("expected exact-arity error, got %v", err)
+			}
+		})
 	}
 }
 

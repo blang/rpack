@@ -3,8 +3,6 @@ package rpack
 import (
 	_ "embed"
 
-	"fmt"
-
 	"github.com/samber/lo"
 )
 
@@ -42,13 +40,14 @@ type RPackDef struct {
 // RPackDefSchemaValidator is the precompiled CUE schema validator for rpack definitions.
 var RPackDefSchemaValidator = lo.Must(NewCueValidator([]byte(RPackDefSchema), RPackDefInternalSchemaName))
 
-// ValidateSchema validates the rpack definition against the CUE schema.
+// ValidateSchema validates the rpack definition against the schema selected by
+// its exact definition contract version.
 func (def *RPackDef) ValidateSchema() error {
-	err := RPackDefSchemaValidator.Validate(def)
+	contract, err := definitionContractFor(def.SchemaVersion)
 	if err != nil {
-		return fmt.Errorf("validating rpack definition failed: %w", err)
+		return err
 	}
-	return nil
+	return contract.validateDefinition(def)
 }
 
 // TODO: Make this an enum type, but also requires ability in json unmarshaller

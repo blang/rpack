@@ -79,7 +79,7 @@ func TestValidateRPackDef(t *testing.T) {
 			wantErr: true,
 			errMsg:  "schema validation",
 			files: map[string]string{
-				"rpack.yaml": "name: 123\n",
+				"rpack.yaml": "\"@schema_version\": \"v1\"\n",
 				"script.lua": "print(\"hello\")",
 			},
 		},

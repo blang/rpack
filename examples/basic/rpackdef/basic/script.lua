@@ -53,7 +53,7 @@ printMembersRecursive(values, "values")
 
 -- Actual action
 rpack.copy("rpack:myfile.yaml", "myfile.yaml")
-local content = rpack.read_yaml("rpack:myfile.yaml")
+local content = rpack.from_yaml(rpack.read("rpack:myfile.yaml"))
 table.insert(content.users, "eve")
 rpack.write("temp:temporary_output.yaml", rpack.to_yaml(content))
 local content2 = rpack.from_yaml(rpack.read("temp:temporary_output.yaml"))

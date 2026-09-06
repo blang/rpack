@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"os"
-
+	"io"
 	"log/slog"
+	"os"
 
 	"github.com/golang-cz/devslog"
 	"github.com/spf13/cobra"
@@ -17,11 +17,12 @@ var rootCmd = &cobra.Command{
 	Long:    ``,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		flagDebug, _ := cmd.Flags().GetBool("debug")
+		flagNoColor, _ := cmd.Flags().GetBool("no-color")
 		logLevel := slog.LevelInfo
 		if flagDebug {
 			logLevel = slog.LevelDebug
 		}
-		setupLogger(logLevel)
+		setupLogger(logLevel, flagNoColor)
 	},
 }
 
@@ -33,7 +34,15 @@ func Execute() {
 	}
 }
 
-func setupLogger(lvl slog.Level) {
+// setupLogger installs the default logger on os.Stderr. Note that devslog
+// additionally auto-disables color when NO_COLOR is non-empty or TERM=dumb.
+func setupLogger(lvl slog.Level, noColor bool) {
+	slog.SetDefault(newLogger(lvl, noColor, os.Stderr))
+}
+
+// newLogger builds a devslog-based logger writing to w. Split out from
+// setupLogger so tests can capture output and exercise color behavior.
+func newLogger(lvl slog.Level, noColor bool, w io.Writer) *slog.Logger {
 	slogOpts := &slog.HandlerOptions{
 		AddSource: false,
 		Level:     lvl,
@@ -47,12 +56,13 @@ func setupLogger(lvl slog.Level) {
 		NewLineAfterLog:   false,
 		DebugColor:        devslog.Magenta,
 		StringerFormatter: true,
+		NoColor:           noColor,
 	}
 
-	logger := slog.New(devslog.NewHandler(os.Stderr, opts))
-	slog.SetDefault(logger)
+	return slog.New(devslog.NewHandler(w, opts))
 }
 
 func init() {
 	rootCmd.PersistentFlags().BoolP("debug", "", false, "Enable verbose logging")
+	rootCmd.PersistentFlags().BoolP("no-color", "", false, "Disable colored log output")
 }

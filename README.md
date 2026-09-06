@@ -289,6 +289,18 @@ The [skills/](./skills) directory contains AI agent skills for guided rpack deve
 
 ## CLI reference
 
+### Global flags
+
+Available on all commands:
+
+| Flag | Description |
+|------|-------------|
+| `--debug` | Enable verbose logging |
+| `--no-color` | Disable colored log output |
+
+Colors are also disabled automatically when the `NO_COLOR` environment
+variable is set to a non-empty value or when `TERM=dumb`.
+
 ### `rpack run [-d <dir>] [flags] [<config-file>]`
 
 Execute an rpack from a user config file or a local definition directory.
@@ -315,7 +327,6 @@ rpack run --def ./my-rpack --set author=test --dry-run
 | `--dry-run` | `-n` | Preview changes. In `--def` mode, prints each file's path and content to stdout. |
 | `--force` | `-f` | Overwrite files, ignore lockfile integrity warnings. With `--output-dir`, allow overwriting non-empty directories. |
 | `--working-dir` | `-w` | Override working directory (default: config file location) |
-| `--debug` | | Enable verbose logging |
 
 ### `rpack check <config>`
 
@@ -324,7 +335,6 @@ Verify lockfile integrity — checks that all managed files exist and haven't be
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--working-dir` | `-w` | Override working directory |
-| `--debug` | | Enable verbose logging |
 
 ### `rpack test --def <dir> [--filter <name>] [--init <name>] [--strict]`
 
@@ -350,7 +360,6 @@ script.lua exists, and schema.cue (if present) is syntactically correct.
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--def` | `-d` | Path to rpack definition directory (required) |
-| `--debug` | | Enable verbose logging |
 
 ### `rpack bundle --def <dir> --format <format> --output <path>`
 
@@ -361,7 +370,6 @@ Bundle an rpack definition directory into a single archive file.
 | `--def` | `-d` | Path to rpack definition directory (required) |
 | `--format` | `-f` | Archive format: `zip`, `tar.xz`, or `tar.bz2` (required) |
 | `--output` | `-o` | Output archive path (required) |
-| `--debug` | | Enable verbose logging |
 
 **Examples:**
 ```
@@ -379,7 +387,6 @@ Publish an rpack definition to a registry or create a local archive.
 | `--def` | `-d` | Path to rpack definition directory (required) |
 | `--type` | `-T` | Publish type: `oci` or `archive` (required) |
 | `--target` | `-t` | OCI URL (`oci://`) or archive path (`.tar.xz`) (required) |
-| `--debug` | | Enable verbose logging |
 
 **OCI:** `rpack publish -d ./myrpack -T oci -t oci://docker.io/user/pack?tag=v1`
 **Archive:** `rpack publish -d ./myrpack -T archive -t ./dist/pack.tar.xz`

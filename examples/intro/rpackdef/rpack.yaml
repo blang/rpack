@@ -3,5 +3,3 @@ name: "intro"
 inputs:
   - name: users.yaml
     type: file
-# values:
-#   author: Benedikt Lang

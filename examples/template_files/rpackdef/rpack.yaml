@@ -3,5 +3,3 @@ name: "basic"
 inputs:
   - name: authors.yaml
     type: file
-# values:
-#   output_file: "./AUTHORS.md"

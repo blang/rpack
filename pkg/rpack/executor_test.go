@@ -307,8 +307,13 @@ func TestExecRPack_NormalMode_NoLockfile_ProducesFilesAndLockfile(t *testing.T) 
 func TestExecRPack_NormalMode_NoLockfile_AcceptsLegacyOptionalInput(t *testing.T) {
 	defDir, useDir, cfg := setupExecRPackEnv(t,
 		"local rpack = require(\"rpack.v1\"); rpack.write('./a.txt', 'A')")
+	// Mirrors a real pre-v0.5.0 definition: legacy values documentation block
+	// plus the legacy optional marker on inputs.
 	writeFile(t, filepath.Join(defDir, "rpack.yaml"), `"@schema_version": "v1"
 name: "legacy-optional"
+values:
+  repo:
+    description: "Documents expected values"
 inputs:
   - name: unused
     type: file

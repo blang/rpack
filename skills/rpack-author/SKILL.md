@@ -41,6 +41,7 @@ inputs:
 - `@schema_version` — always `"v1"` (quoted, because CUE requires it)
 - `name` — alphanumeric, dashes, and underscores, 1-64 characters
 - `inputs` — optional list of `{name, type, optional?}` where type is `"file"` or `"dir"` and `optional` is a boolean
+- `values` — optional documentation block describing expected values; NOT applied at runtime (values come from user configs). Tolerated for compatibility with pre-v0.5.0 definitions.
 
 Inputs are optional by default for backward compatibility: an omitted `optional` or `optional: true` keeps the input optional — unmapped optional inputs are simply not available, and scripts should handle them gracefully. `optional: false` marks an input as required: a config that doesn't map it is rejected before the Lua script runs.
 

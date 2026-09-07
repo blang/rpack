@@ -96,9 +96,17 @@ func validateDefinitionContract(contract *DefinitionContract) {
 // RPackDef.contractDocument so the definition schema validates the exact
 // contract fields instead of the normalized public structs.
 type contractV1Document struct {
-	SchemaVersion string                `json:"@schema_version"`
-	Name          string                `json:"name"`
-	Inputs        []*contractV1DefInput `json:"inputs"`
+	SchemaVersion string `json:"@schema_version"`
+	Name          string `json:"name"`
+
+	// Values is a legacy pre-v0.5.0 author documentation block. No released
+	// runtime ever applied it (values come from user configs); pre-v0.5.0
+	// lenient decoding silently dropped it. V1 tolerates it so definitions
+	// carrying it keep loading, and normalization drops it, preserving the
+	// historical no-op behavior exactly.
+	Values map[string]any `json:"values,omitempty"`
+
+	Inputs []*contractV1DefInput `json:"inputs"`
 }
 
 // contractV1DefInput is the wire form of a declared input.

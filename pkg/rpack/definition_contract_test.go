@@ -122,6 +122,39 @@ inputs:
 	}
 }
 
+func TestLoadRPackDef_AcceptsLegacyValuesBlock(t *testing.T) {
+	// Definition-level `values` was never applied by any released runtime;
+	// pre-v0.5.0 lenient decoding silently dropped it. Definitions carrying
+	// it as author documentation must keep loading under the strict v1
+	// contract, and the normalized definition must stay unaffected.
+	path := writeDefinitionFile(t, `
+"@schema_version": "v1"
+name: "legacy-values"
+values:
+  repo:
+    description: "Documents expected values"
+  author: Benedikt Lang
+inputs:
+  - type: file
+    name: users.yaml
+    optional: true
+`)
+
+	def, err := LoadRPackDef(path)
+	if err != nil {
+		t.Fatalf("legacy values block should load: %v", err)
+	}
+	if err = def.ValidateSchema(); err != nil {
+		t.Fatalf("legacy values block should validate: %v", err)
+	}
+	want := []*RPackDefInput{
+		{Type: RPackDefInputTypeFile, Name: "users.yaml", Required: false},
+	}
+	if !reflect.DeepEqual(def.Inputs, want) {
+		t.Fatalf("normalized inputs = %+v, want %+v", def.Inputs, want)
+	}
+}
+
 func TestLoadRPackDef_OptionalFalseMarksInputRequired(t *testing.T) {
 	path := writeDefinitionFile(t, `
 "@schema_version": "v1"

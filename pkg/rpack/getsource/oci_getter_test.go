@@ -16,7 +16,6 @@ import (
 
 	getter "github.com/hashicorp/go-getter"
 	ociDigest "github.com/opencontainers/go-digest"
-	ociSpecs "github.com/opencontainers/image-spec/specs-go"
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	orasContent "oras.land/oras-go/v2/content"
 	orasMemory "oras.land/oras-go/v2/content/memory"
@@ -272,12 +271,10 @@ func ociPushFakeImageManifest(t *testing.T, desc ociv1.Descriptor, artifactType 
 func ociPushFakeImageManifestWithLayers(t *testing.T, layers []ociv1.Descriptor, artifactType string, store orasContent.Storage) ociv1.Descriptor {
 	t.Helper()
 	manifest := ociv1.Manifest{
-		MediaType:    ociv1.MediaTypeImageManifest,
-		ArtifactType: artifactType,
-		Layers:       layers,
-		Versioned: ociSpecs.Versioned{
-			SchemaVersion: 2,
-		},
+		SchemaVersion: 2,
+		MediaType:     ociv1.MediaTypeImageManifest,
+		ArtifactType:  artifactType,
+		Layers:        layers,
 	}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {

@@ -42,13 +42,13 @@ just prek-run     # run all pre-commit hooks on all files
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Go | 1.26.2 | go.mod; mise.toml |
-| golangci-lint | 2.11.4 | `.golangci.yml` |
-| goimports | 0.44.0 | `go:golang.org/x/tools/cmd/goimports` |
-| prek | 0.3.8 | `prek.toml` |
-| selene | 0.30.1 | `aqua:Kampfkarren/selene`; `selene.toml` |
-| stylua | 2.4.1 | `.stylua.toml` |
-| cue | 0.16.1 | CUE schema formatter/validator |
+| Go | 1.27.1 | go.mod; mise.toml |
+| golangci-lint | 2.13.2 | `.golangci.yml` |
+| goimports | 0.49.0 | `go:golang.org/x/tools/cmd/goimports` |
+| prek | 0.5.2 | `prek.toml` |
+| selene | 0.31.0 | `aqua:Kampfkarren/selene`; `selene.toml` |
+| stylua | 2.5.2 | `.stylua.toml` |
+| cue | 0.17.1 | CUE schema formatter/validator |
 | yamllint | 1.38.0 | `.yamllint.yml` |
 
 `mise activate` auto-installs pre-commit hooks via the `enter` hook.

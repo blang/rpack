@@ -62,6 +62,9 @@ linters:
     gocyclo:
       min-complexity: 15
 
+    goconst:
+      ignore-tests: true
+
     gocritic:
       enabled-tags:
         - diagnostic

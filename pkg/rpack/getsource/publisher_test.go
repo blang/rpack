@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	ociDigest "github.com/opencontainers/go-digest"
-	ociSpecs "github.com/opencontainers/image-spec/specs-go"
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	orasMemory "oras.land/oras-go/v2/content/memory"
 )
@@ -194,12 +193,10 @@ func (s *inMemoryPublisherStore) PushBlob(ctx context.Context, mediaType string,
 
 func (s *inMemoryPublisherStore) PushManifest(ctx context.Context, artifactType string, layers []ociv1.Descriptor) (ociv1.Descriptor, error) {
 	manifest := ociv1.Manifest{
-		MediaType:    ociv1.MediaTypeImageManifest,
-		ArtifactType: artifactType,
-		Layers:       layers,
-		Versioned: ociSpecs.Versioned{
-			SchemaVersion: 2,
-		},
+		SchemaVersion: 2,
+		MediaType:     ociv1.MediaTypeImageManifest,
+		ArtifactType:  artifactType,
+		Layers:        layers,
 	}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {

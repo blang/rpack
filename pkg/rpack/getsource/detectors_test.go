@@ -28,8 +28,7 @@ func TestFileDetector_RelativePath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for relative path without ./ or ../ prefix")
 	}
-	var relErr *MaybeRelativePathError
-	if !errors.As(err, &relErr) {
+	if _, ok := errors.AsType[*MaybeRelativePathError](err); !ok {
 		t.Fatalf("expected *MaybeRelativePathError, got %T: %s", err, err)
 	}
 }

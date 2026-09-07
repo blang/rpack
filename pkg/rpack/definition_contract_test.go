@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -87,6 +88,95 @@ name: "second"
 	}
 	if !strings.Contains(err.Error(), "name") || !strings.Contains(err.Error(), "already set") {
 		t.Fatalf("expected duplicate-name error, got: %v", err)
+	}
+}
+
+func TestLoadRPackDef_AcceptsLegacyOptionalTrueAsNoOp(t *testing.T) {
+	// Before v0.5.0 lenient decoding silently ignored inputs[].optional; all
+	// inputs were effectively optional, so `optional: true` must keep loading
+	// and validating under the strict v1 contract.
+	path := writeDefinitionFile(t, `
+"@schema_version": "v1"
+name: "legacy-optional"
+inputs:
+  - type: file
+    name: legacy
+    optional: true
+  - type: dir
+    name: plain
+`)
+
+	def, err := LoadRPackDef(path)
+	if err != nil {
+		t.Fatalf("legacy optional: true should load: %v", err)
+	}
+	if err = def.ValidateSchema(); err != nil {
+		t.Fatalf("legacy optional: true should validate: %v", err)
+	}
+	want := []*RPackDefInput{
+		{Type: RPackDefInputTypeFile, Name: "legacy", Required: false},
+		{Type: RPackDefInputTypeDirectory, Name: "plain", Required: false},
+	}
+	if !reflect.DeepEqual(def.Inputs, want) {
+		t.Fatalf("normalized inputs = %+v, want %+v", def.Inputs, want)
+	}
+}
+
+func TestLoadRPackDef_OptionalFalseMarksInputRequired(t *testing.T) {
+	path := writeDefinitionFile(t, `
+"@schema_version": "v1"
+name: "required-input"
+inputs:
+  - type: file
+    name: required
+    optional: false
+`)
+
+	def, err := LoadRPackDef(path)
+	if err != nil {
+		t.Fatalf("optional: false should load: %v", err)
+	}
+	if err = def.ValidateSchema(); err != nil {
+		t.Fatalf("optional: false should validate: %v", err)
+	}
+	if len(def.Inputs) != 1 || !def.Inputs[0].Required {
+		t.Fatalf("normalized input = %+v, want Required=true", def.Inputs)
+	}
+}
+
+func TestLoadRPackDef_RejectsUnknownNestedInputField(t *testing.T) {
+	path := writeDefinitionFile(t, `
+"@schema_version": "v1"
+name: "nested-typo"
+inputs:
+  - type: file
+    name: typo
+    unknown_input_field: true
+`)
+
+	_, err := LoadRPackDef(path)
+	if err == nil {
+		t.Fatal("expected strict-decode error for unknown nested input field")
+	}
+	if !strings.Contains(err.Error(), `unknown field "unknown_input_field"`) {
+		t.Fatalf("expected unknown-field error, got: %v", err)
+	}
+}
+
+func TestRPackDefValidateSchema_RejectsNullInputWithoutPanicking(t *testing.T) {
+	path := writeDefinitionFile(t, `
+"@schema_version": "v1"
+name: "null-input"
+inputs:
+  - null
+`)
+
+	def, err := LoadRPackDef(path)
+	if err != nil {
+		t.Fatalf("strict decode should accept YAML null: %v", err)
+	}
+	if err = def.ValidateSchema(); err == nil {
+		t.Fatal("expected schema rejection of null input")
 	}
 }
 

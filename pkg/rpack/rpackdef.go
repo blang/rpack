@@ -68,6 +68,8 @@ type RPackDefInput struct {
 	// Name to reference path in script
 	Name string `json:"name"`
 
-	// // If the input is required
-	// Required bool `json:"required"`
+	// Required is normalized contract behavior. Under v1 it is true only when
+	// the definition explicitly declares `optional: false`; omission remains
+	// optional for compatibility with definitions created before v0.5.0.
+	Required bool `json:"-"`
 }

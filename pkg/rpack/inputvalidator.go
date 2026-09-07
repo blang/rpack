@@ -9,37 +9,35 @@ import "fmt"
 // Before this can happen, the RPackInstanceInputs need to point to actual absolute paths
 func ValidateRPackInputs(resolvedInputs []*RPackResolvedInput, defInputs []*RPackDefInput) error {
 	// Check User Inputs names are unique
-	{
-		visitedNames := make(map[string]struct{})
-		for _, in := range resolvedInputs {
-			if _, ok := visitedNames[in.Name]; ok {
-				return fmt.Errorf("resolved input %s already exists", in.Name)
-			}
-			visitedNames[in.Name] = struct{}{}
+	resolvedByName := make(map[string]*RPackResolvedInput, len(resolvedInputs))
+	for _, in := range resolvedInputs {
+		if _, ok := resolvedByName[in.Name]; ok {
+			return fmt.Errorf("resolved input %s already exists", in.Name)
 		}
+		resolvedByName[in.Name] = in
 	}
 
 	// Check Def Inputs names are unique
-	{
-		visitedNames := make(map[string]struct{})
-		for _, in := range defInputs {
-			if _, ok := visitedNames[in.Name]; ok {
-				return fmt.Errorf("rpackdef input %s already exists", in.Name)
-			}
-			visitedNames[in.Name] = struct{}{}
+	defByName := make(map[string]*RPackDefInput, len(defInputs))
+	for _, in := range defInputs {
+		if _, ok := defByName[in.Name]; ok {
+			return fmt.Errorf("rpackdef input %s already exists", in.Name)
+		}
+		defByName[in.Name] = in
+	}
+
+	// Check every explicitly required definition input was supplied. Inputs
+	// without required set retain the legacy optional-by-default behavior.
+	for _, in := range defInputs {
+		if _, ok := resolvedByName[in.Name]; in.Required && !ok {
+			return fmt.Errorf("required input %q was not provided: %w", in.Name, ErrInputValidation)
 		}
 	}
 
 	// Check every resolved Input matches a defInput
 	for _, in := range resolvedInputs {
-		var matchDefInput *RPackDefInput
-		for _, defIn := range defInputs {
-			if in.Name == defIn.Name {
-				matchDefInput = defIn
-				break
-			}
-		}
-		if matchDefInput == nil {
+		matchDefInput, ok := defByName[in.Name]
+		if !ok {
 			return fmt.Errorf("no definition found for user input %s: %w", in.Name, ErrInputValidation)
 		}
 		// TODO: Refactor for proper type check

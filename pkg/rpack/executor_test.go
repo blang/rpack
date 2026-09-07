@@ -304,6 +304,54 @@ func TestExecRPack_NormalMode_NoLockfile_ProducesFilesAndLockfile(t *testing.T) 
 	}
 }
 
+func TestExecRPack_NormalMode_NoLockfile_AcceptsLegacyOptionalInput(t *testing.T) {
+	defDir, useDir, cfg := setupExecRPackEnv(t,
+		"local rpack = require(\"rpack.v1\"); rpack.write('./a.txt', 'A')")
+	writeFile(t, filepath.Join(defDir, "rpack.yaml"), `"@schema_version": "v1"
+name: "legacy-optional"
+inputs:
+  - name: unused
+    type: file
+    optional: true
+`)
+
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("ExecRPack without lockfile: %v", err)
+	}
+	if !fileExists(filepath.Join(useDir, "a.txt")) {
+		t.Fatal("a.txt not written")
+	}
+	if !fileExists(filepath.Join(useDir, "app.rpack.lock.yaml")) {
+		t.Fatal("lockfile not written")
+	}
+}
+
+func TestExecRPack_NormalMode_NoLockfile_RejectsMissingRequiredInput(t *testing.T) {
+	defDir, useDir, cfg := setupExecRPackEnv(t,
+		"local rpack = require(\"rpack.v1\"); rpack.write('./must-not-exist', 'unexpected')")
+	writeFile(t, filepath.Join(defDir, "rpack.yaml"), `"@schema_version": "v1"
+name: "required-input"
+inputs:
+  - name: required
+    type: file
+    optional: false
+`)
+
+	err := runExecRPack(t, false, cfg, useDir)
+	if err == nil || !strings.Contains(err.Error(), `required input "required" was not provided`) {
+		t.Fatalf("expected missing-required-input error, got: %v", err)
+	}
+	if !errors.Is(err, ErrInputValidation) {
+		t.Fatalf("expected ErrInputValidation, got: %v", err)
+	}
+	if fileExists(filepath.Join(useDir, "must-not-exist")) {
+		t.Fatal("Lua executed despite missing required input")
+	}
+	if fileExists(filepath.Join(useDir, "app.rpack.lock.yaml")) {
+		t.Fatal("lockfile written despite missing required input")
+	}
+}
+
 func TestExecRPack_NormalMode_ModifiedLockfileRefusedThenForce(t *testing.T) {
 	_, useDir, cfg := setupExecRPackEnv(t,
 		"local rpack = require(\"rpack.v1\"); rpack.write('./a.txt', 'A')")

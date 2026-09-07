@@ -53,7 +53,10 @@ name: "intro"
 inputs:
   - name: users.yaml
     type: file
+    optional: false
 ```
+
+Inputs are optional by default for backward compatibility (`optional` omitted or `optional: true`). `optional: false` marks an input as required — a config that doesn't map it is rejected before the Lua script runs.
 
 **`script.lua`** — the Lua script that processes files:
 ```lua

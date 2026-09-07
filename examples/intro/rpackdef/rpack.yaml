@@ -3,3 +3,4 @@ name: "intro"
 inputs:
   - name: users.yaml
     type: file
+    optional: false

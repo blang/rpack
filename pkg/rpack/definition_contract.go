@@ -89,12 +89,52 @@ func validateDefinitionContract(contract *DefinitionContract) {
 	}
 }
 
+// contractV1Document is the exact wire shape of a v1 rpack definition.
+// Strict-decoding it keeps unknown-field rejection tied to the v1 contract,
+// while normalizing into the public RPackDef keeps runtime code free of
+// contract-versioned fields. The wire document is retained in
+// RPackDef.contractDocument so the definition schema validates the exact
+// contract fields instead of the normalized public structs.
+type contractV1Document struct {
+	SchemaVersion string                `json:"@schema_version"`
+	Name          string                `json:"name"`
+	Inputs        []*contractV1DefInput `json:"inputs"`
+}
+
+// contractV1DefInput is the wire form of a declared input.
+//
+//nolint:govet // Optional must be a pointer so omitted and explicit false remain distinguishable.
+type contractV1DefInput struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+
+	// Optional uses compatibility-preserving v1 semantics: omission and true
+	// are optional, while an explicit false marks the input as required.
+	Optional *bool `json:"optional,omitempty"`
+}
+
 func decodeDefinitionContractV1(data []byte) (*RPackDef, error) {
-	var def RPackDef
-	if err := yaml.UnmarshalStrict(data, &def); err != nil {
+	var doc contractV1Document
+	if err := yaml.UnmarshalStrict(data, &doc); err != nil {
 		return nil, err
 	}
-	return &def, nil
+	def := &RPackDef{
+		contractDocument: &doc,
+		SchemaVersion:    doc.SchemaVersion,
+		Name:             doc.Name,
+	}
+	for _, input := range doc.Inputs {
+		if input == nil {
+			def.Inputs = append(def.Inputs, nil)
+			continue
+		}
+		def.Inputs = append(def.Inputs, &RPackDefInput{
+			Type:     input.Type,
+			Name:     input.Name,
+			Required: input.Optional != nil && !*input.Optional,
+		})
+	}
+	return def, nil
 }
 
 func definitionContractV1ConfigValidator(data []byte, path string) (SchemaValidator, error) {

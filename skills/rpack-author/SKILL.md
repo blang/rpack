@@ -33,15 +33,16 @@ name: "my-rpack"
 inputs:
   - name: users.yaml
     type: file
+    optional: false
   - name: configs
     type: dir
 ```
 
 - `@schema_version` — always `"v1"` (quoted, because CUE requires it)
 - `name` — alphanumeric, dashes, and underscores, 1-64 characters
-- `inputs` — optional list of `{name, type}` where type is `"file"` or `"dir"`
+- `inputs` — optional list of `{name, type, optional?}` where type is `"file"` or `"dir"` and `optional` is a boolean
 
-Inputs declared here are NOT automatically provided. The user must map them in their config. Inputs not configured by the user are simply not available — scripts should handle missing optional inputs gracefully.
+Inputs are optional by default for backward compatibility: an omitted `optional` or `optional: true` keeps the input optional — unmapped optional inputs are simply not available, and scripts should handle them gracefully. `optional: false` marks an input as required: a config that doesn't map it is rejected before the Lua script runs.
 
 ### script.lua
 
@@ -294,7 +295,7 @@ Scripts access files through four prefixes. Understanding these is critical:
 
 2. **Simple schemas.** Validate what matters — required values, format constraints. Don't over-constrain. The Lua script handles business logic.
 
-3. **Handle missing inputs gracefully.** Not all declared inputs will be configured. Use `rpack.inputs()` to get the list of configured inputs and check for your input name before reading.
+3. **Handle missing optional inputs gracefully.** Inputs declared optional (or with `optional` omitted) may not be mapped by the user. Use `rpack.inputs()` to get the list of configured inputs and check for your input name before reading. Inputs declared `optional: false` are required and enforced before the script runs — no guard needed.
 
 4. **Use Go template syntax, not Lua.** `{{ .value }}` in template files, never `.. value ..` or string.find hacks. Go templates are the right tool for text generation.
 
@@ -312,7 +313,7 @@ Scripts access files through four prefixes. Understanding these is critical:
 
 2. **Missing schema field for a value used in `script.lua`.** If your script reads `values.org`, add `org` to the schema. Without it, invalid values slip through to runtime.
 
-3. **Not handling optional inputs.** If you declare an input but the user doesn't configure it, `rpack.read("map:name")` will fail. Always guard by checking `rpack.inputs()` for the input name before reading.
+3. **Not handling optional inputs.** If you declare an input without `optional: false` and the user doesn't map it, `rpack.read("map:name")` will fail. Always guard by checking `rpack.inputs()` for the input name before reading. Inputs declared `optional: false` are rejected before Lua when missing — never guard those.
 
 4. **Using Lua string interpolation for templates.** `"Hello " .. values.name` works but loses template features. Use `rpack.template()` with proper template files instead.
 

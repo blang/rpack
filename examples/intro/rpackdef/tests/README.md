@@ -81,7 +81,7 @@ set -e
 DEFDIR="$1"
 OUTDIR="$2"
 
-# Run rpack without required input - should fail
+# Run rpack without required input (declared optional: false) - should fail
 if rpack run --def "$DEFDIR" \
   --set author="Test Author" \
   --output-dir "$OUTDIR"; then
@@ -89,8 +89,8 @@ if rpack run --def "$DEFDIR" \
   exit 1
 fi
 
-# Verify failure was from Lua execution
-jq -e '.error_phase == "lua_execution"' "$OUTDIR/meta.json" \
+# Verify failure happened during input validation, before the script ran
+jq -e '.error_phase == "input_validation"' "$OUTDIR/meta.json" \
   || { echo "FAIL: wrong error phase"; exit 1; }
 
 # Verify error message mentions the missing input

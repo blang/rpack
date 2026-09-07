@@ -41,6 +41,48 @@ func TestValidateRPackInputs(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:     "omitted optional marker remains optional",
+			resolved: nil,
+			def: []*RPackDefInput{
+				{
+					Name: "legacy-optional",
+					Type: RPackDefInputTypeFile,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:     "missing required input",
+			resolved: nil,
+			def: []*RPackDefInput{
+				{
+					Name:     "required",
+					Type:     RPackDefInputTypeFile,
+					Required: true,
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "supplied required input",
+			resolved: []*RPackResolvedInput{
+				{
+					Name:         "required",
+					UserPath:     "a",
+					ResolvedPath: "pathA",
+					Type:         RPackInputTypeFile,
+				},
+			},
+			def: []*RPackDefInput{
+				{
+					Name:     "required",
+					Type:     RPackDefInputTypeFile,
+					Required: true,
+				},
+			},
+			expectError: false,
+		},
+		{
 			name: "duplicate resolved input names",
 			resolved: []*RPackResolvedInput{
 				{

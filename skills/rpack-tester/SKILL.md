@@ -21,7 +21,7 @@ rpackdef/
       users.yaml            # Optional test fixture
     schema-validation/      # Verify schema rejects invalid values
       run.sh
-    missing-input/          # Verify graceful handling of missing inputs
+    missing-input/          # Verify optional input tested absent / required input rejected
       run.sh
 ```
 
@@ -178,7 +178,7 @@ set -e
 DEFDIR="$1"
 OUTDIR="$2"
 
-# Run rpack WITHOUT required input file
+# Run rpack WITHOUT a required input (declared optional: false)
 if rpack run --def "$DEFDIR" \
   --set author="Test Author" \
   --output-dir "$OUTDIR"; then
@@ -190,9 +190,9 @@ fi
 jq -e '.success == false' "$OUTDIR/meta.json" \
   || { echo "FAIL: meta.json should show success=false"; exit 1; }
 
-# Verify correct error phase
-jq -e '.error_phase == "lua_execution"' "$OUTDIR/meta.json" \
-  || { echo "FAIL: error_phase should be lua_execution, got $(jq -r '.error_phase' "$OUTDIR/meta.json")"; exit 1; }
+# Verify correct error phase — required inputs are rejected before Lua
+jq -e '.error_phase == "input_validation"' "$OUTDIR/meta.json" \
+  || { echo "FAIL: error_phase should be input_validation, got $(jq -r '.error_phase' "$OUTDIR/meta.json")"; exit 1; }
 
 # Verify error message mentions what went wrong
 jq -e '.error | test("users.yaml")' "$OUTDIR/meta.json" \
@@ -202,7 +202,8 @@ echo "PASS: missing-input"
 ```
 
 **Error scenarios to test:**
-- Missing required input file
+- Missing required input (declared `optional: false`) — fails with `input_validation`, before Lua
+- Missing optional input — script handles gracefully, run succeeds
 - Missing required value
 - Malformed input file (invalid YAML, wrong structure)
 - Input file outside sandbox
@@ -338,14 +339,15 @@ jq -e '.success == false' "$OUTDIR/meta.json" \
 1. **All files from `files/` are produced in output** — Check `meta.json` `files_written` array or `test -f` for each expected output file
 2. **Values provided via `--set` appear in output** — `grep -q` for each templated value
 3. **Schema rejects invalid values** — Run with bad type, bad range, bad pattern and verify failure
-4. **Optional inputs are handled gracefully** — Run without optional input, verify success
-5. **Template escaping works** — If templates contain literal `{{` (e.g., GitHub Actions), verify they're not parsed as Go templates
+4. **Optional inputs are tested absent** — Run without each input declared optional (or with `optional` omitted), verify success
+5. **Required inputs fail before Lua** — Run without an input declared `optional: false`, verify failure with `error_phase == "input_validation"`
+6. **Template escaping works** — If templates contain literal `{{` (e.g., GitHub Actions), verify they're not parsed as Go templates
 
 ### Test When Present
 
-6. **Input file processing** — If the script reads input files, test with valid and malformed inputs
-7. **Multiple patterns combined** — If the script mixes copy/template/merge, verify each pattern produces correct output
-8. **Directory creation** — Verify nested directories like `.github/workflows/` are created automatically
+7. **Input file processing** — If the script reads input files, test with valid and malformed inputs
+8. **Multiple patterns combined** — If the script mixes copy/template/merge, verify each pattern produces correct output
+9. **Directory creation** — Verify nested directories like `.github/workflows/` are created automatically
 
 ## Anti-Patterns
 

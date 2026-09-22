@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/samber/lo"
@@ -259,14 +260,20 @@ func TestRPackLockFileChanges(t *testing.T) {
 
 //nolint:gocognit,gocyclo // test: table of independent subtest scenarios
 func TestRPackLockFileCheckIntegrity_Modes(t *testing.T) {
+	// setup creates a file with an exact on-disk mode (chmod after write so
+	// the process umask cannot silently narrow it, e.g. 0664 -> 0644).
 	setup := func(t *testing.T, name string, mode os.FileMode) (dir, sha string) {
 		t.Helper()
 		dir = t.TempDir()
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte("content"), mode); err != nil { //nolint:gosec // test fixture
+		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil { //nolint:gosec // test fixture
 			t.Fatal(err)
 		}
-		return dir, calculateSHA256(t, p)
+		sha = calculateSHA256(t, p)
+		if err := os.Chmod(p, mode); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		return dir, sha
 	}
 
 	t.Run("mode matches", func(t *testing.T) {
@@ -282,7 +289,7 @@ func TestRPackLockFileCheckIntegrity_Modes(t *testing.T) {
 		}
 	})
 
-	t.Run("mode drift reported with want/got", func(t *testing.T) {
+	t.Run("mode drift reported as executable intent", func(t *testing.T) {
 		dir, sha := setup(t, "f.sh", 0o644)
 		lf := NewRPackLockFile()
 		lf.AddFile("f.sh", sha, "755")
@@ -291,11 +298,56 @@ func TestRPackLockFileCheckIntegrity_Modes(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(integrity.ModeModified) != 1 ||
-			integrity.ModeModified[0] != "f.sh (recorded 755, on disk 644)" {
-			t.Errorf("ModeModified = %v, want want/got pair", integrity.ModeModified)
+			integrity.ModeModified[0] != "f.sh (expected executable (755), found non-executable (644))" {
+			t.Errorf("ModeModified = %v, want executable-intent diagnostic", integrity.ModeModified)
 		}
 		if len(integrity.Modified) != 0 {
 			t.Errorf("content-only change expected none, got %v", integrity.Modified)
+		}
+	})
+
+	t.Run("owner execute added drift", func(t *testing.T) {
+		dir, sha := setup(t, "f.txt", 0o744)
+		lf := NewRPackLockFile()
+		lf.AddFile("f.txt", sha, "644")
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(integrity.ModeModified) != 1 ||
+			integrity.ModeModified[0] != "f.txt (expected non-executable (644), found executable (755))" {
+			t.Errorf("ModeModified = %v, want executable-intent diagnostic", integrity.ModeModified)
+		}
+	})
+
+	// Local read/write policy (umask, ACLs) and non-owner execute bits are
+	// not drift: only owner-execute intent is compared (issue #15).
+	t.Run("local permission policy drift accepted", func(t *testing.T) {
+		cases := []struct { //nolint:govet // fieldalignment is not critical in tests
+			name       string
+			recorded   string
+			onDiskMode os.FileMode
+		}{
+			{"record 644, on disk 664 (umask 0002)", "644", 0o664},
+			{"record 644, on disk 600 (umask 0077)", "644", 0o600},
+			{"record 644, on disk 654 (group-only execute)", "644", 0o654},
+			{"record 755, on disk 700 (umask 0077)", "755", 0o700},
+			{"record 755, on disk 775 (umask 0002)", "755", 0o775},
+			{"record 755, on disk 751 (other-only execute)", "755", 0o751},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				dir, sha := setup(t, "f.bin", tc.onDiskMode)
+				lf := NewRPackLockFile()
+				lf.AddFile("f.bin", sha, tc.recorded)
+				integrity, err := lf.CheckIntegrity(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(integrity.ModeModified) != 0 {
+					t.Errorf("accepted drift flagged: %v", integrity.ModeModified)
+				}
+			})
 		}
 	})
 
@@ -343,6 +395,80 @@ func TestRPackLockFileCheckIntegrity_Modes(t *testing.T) {
 		}
 		if len(integrity.Modified) != 1 || integrity.Modified[0] != "secret.txt" {
 			t.Errorf("Modified = %v, want secret.txt classified as drift", integrity.Modified)
+		}
+	})
+}
+
+// --- Legacy mode records (issue #15) ----------------------------------------
+
+//nolint:gocognit,gocyclo // test: table of independent subtest scenarios
+func TestRPackLockFileCheckIntegrity_LegacyModes(t *testing.T) {
+	setup := func(t *testing.T, name string) (dir, sha string) {
+		t.Helper()
+		dir = t.TempDir()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		return dir, calculateSHA256(t, p)
+	}
+
+	// Legacy (pre-canonicalization) recorded modes must hard-error with a
+	// migration hint: not silently skipped, not silently rewritten, and not
+	// force-bypassable drift.
+	t.Run("legacy mode blocks with migration hint", func(t *testing.T) {
+		for _, mode := range []string{"600", "750", "0755", "664"} {
+			t.Run("recorded "+mode, func(t *testing.T) {
+				dir, sha := setup(t, "legacy.conf")
+				lf := NewRPackLockFile()
+				lf.AddFile("legacy.conf", sha, mode)
+				integrity, err := lf.CheckIntegrity(dir)
+				if err == nil {
+					t.Fatalf("legacy mode %q must hard-error, got integrity %+v", mode, integrity)
+				}
+				if !strings.Contains(err.Error(), "requires migration") ||
+					!strings.Contains(err.Error(), "migrate-modes") {
+					t.Errorf("error must be an actionable migration hint, got: %v", err)
+				}
+				if !strings.Contains(err.Error(), mode) {
+					t.Errorf("error must name the legacy mode %q, got: %v", mode, err)
+				}
+			})
+		}
+	})
+
+	t.Run("invalid recorded mode rejected clearly", func(t *testing.T) {
+		for _, mode := range []string{"abc", "999", "75", "4755"} {
+			t.Run("recorded "+mode, func(t *testing.T) {
+				dir, sha := setup(t, "broken.conf")
+				lf := NewRPackLockFile()
+				lf.AddFile("broken.conf", sha, mode)
+				_, err := lf.CheckIntegrity(dir)
+				if err == nil {
+					t.Fatalf("invalid mode %q must be rejected", mode)
+				}
+				if !strings.Contains(err.Error(), "invalid mode") {
+					t.Errorf("error must clearly reject the invalid value, got: %v", err)
+				}
+				if strings.Contains(err.Error(), "requires migration") {
+					t.Errorf("invalid value must not be offered as migratable, got: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("legacy entry blocks even when other entries are clean", func(t *testing.T) {
+		dir, sha := setup(t, "clean.txt")
+		p := filepath.Join(dir, "legacy.conf")
+		if err := os.WriteFile(p, []byte("legacy"), 0o600); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		lf := NewRPackLockFile()
+		lf.AddFile("clean.txt", sha, "644")
+		lf.AddFile("legacy.conf", calculateSHA256(t, p), "600")
+		_, err := lf.CheckIntegrity(dir)
+		if err == nil || !strings.Contains(err.Error(), "requires migration") {
+			t.Fatalf("mixed lockfile with legacy entry must hard-error, got %v", err)
 		}
 	})
 }

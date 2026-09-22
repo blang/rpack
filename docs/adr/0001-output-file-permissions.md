@@ -1,6 +1,8 @@
 # Output file permissions: chmod primitive, mode option, lockfile mode tracking
 
-Status: accepted
+Status: superseded by [ADR 0002 — Executable output intent](0002-executable-output-intent.md) ([issue #15](https://github.com/blang/rpack/issues/15))
+
+**Superseded:** the exact-mode contract below was replaced while rpack is in `0.x`. rpack now manages only each file's executable intent; `mode`/`chmod` are compatibility aliases restricted to `"644"`/`"755"`, creation is umask-aware, and the lockfile records canonical `644`/`755` strings compared by owner-execute. The decision text is preserved unchanged as the historical rationale for the exact-mode design, its lockfile format, and the drift it caused under non-`022` umasks.
 
 rpack could not produce executable output files: every write staged at 0644 and `rpack.copy` discarded source modes. We add an explicit `rpack.chmod(path, mode)` primitive, an optional `{mode = "755"}` options table on `rpack.write`/`rpack.copy`, and record each managed file's mode in the lockfile so out-of-band chmod is detected as drift. Everything is explicit — no content sniffing, no declared outputs, no implicit mode inheritance.
 

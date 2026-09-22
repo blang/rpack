@@ -229,6 +229,27 @@ local output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), {
 rpack.write("./USERS.md", output)
 ```
 
+### Pattern 5: Executable Output
+
+For scripts and other executable files — declare executable intent. rpack tracks only the executable (owner-execute) bit, like git; read/write bits follow the destination's umask, so the same output is `0755` under umask `022` and `0700` under umask `077`.
+
+```lua
+local rpack = require("rpack.v1")
+
+-- Preferred: executable intent, default false
+rpack.write("./deploy.sh", script, { executable = true })
+
+-- Compatibility alias: mode "755" = executable, "644" = non-executable
+rpack.copy("rpack:files/setup.sh", "./setup.sh", { mode = "755" })
+```
+
+**Key points:**
+- Exact permission modes are NOT supported — `mode`/`chmod` accept only `"644"`/`"755"` (with optional leading zeros) as aliases for non-executable/executable intent
+- A write resets intent to non-executable; declare with the final write, or `rpack.chmod(path, "755")` after it
+- `executable` and `mode` in the same options table are rejected
+- Chmod on a `temp:` file never propagates through a later `copy` — the copy's own options decide
+- For private or deployment permissions (e.g. `600`), use external tooling outside rpack
+
 ## File Sandbox Prefixes
 
 Scripts access files through four prefixes. Understanding these is critical:
@@ -323,6 +344,8 @@ Scripts access files through four prefixes. Understanding these is critical:
 7. **Wrong `@schema_version` format.** Must be `"@schema_version": "v1"` — quoted, because CUE requires quoted identifiers for `@`-prefixed fields.
 
 8. **Schema validates the wrong thing.** The schema validates `values` (user config), not the content of template files or output files. Don't try to validate generated content in CUE.
+
+9. **Using `mode = "600"` for private files.** rpack manages only executable intent; `mode`/`chmod` accept only `"644"`/`"755"` as intent aliases (not literal chmod). Exact modes are rejected — apply private or deployment permissions with external tooling instead.
 
 ## Validation Checklist
 

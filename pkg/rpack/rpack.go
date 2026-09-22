@@ -112,8 +112,8 @@ type RPackLockFileFile struct {
 	Path string `json:"path"`
 	// Sha of the path, so we can check if we will remove a modified file
 	Sha string `json:"sha"`
-	// Mode records the file's permission bits as an octal string ("644",
-	// "755") so out-of-band chmod is detected as drift (ADR 0001).
+	// Mode records canonical executable intent: "644" for non-executable,
+	// "755" for executable (ADR 0002), not the file's full rwx permissions.
 	// A string type keeps the YAML output quoted, dodging the YAML
 	// octal-integer trap. Empty means unknown: the entry was written by a
 	// pre-feature rpack and the mode check is skipped for it.
@@ -134,9 +134,11 @@ func (f *RPackLockFile) AddFile(path, sha, mode string) {
 //nolint:revive // intentional: RPack prefix is the domain convention
 type RPackLockFileIntegrity struct {
 	Modified []string
-	// ModeModified holds entries formatted with want/got pairs
-	// ("deploy.sh (recorded 755, on disk 644)") so callers can surface
-	// directly why a content-identical file was flagged (ADR 0001).
+	// ModeModified holds entries formatted with expected/found executable
+	// intent ("deploy.sh (expected executable (755), found non-executable
+	// (644))") so callers can surface directly why a content-identical file
+	// was flagged. Diagnostics describe executable intent, never literal
+	// rwx bits (ADR 0002).
 	ModeModified []string
 	Removed      []string
 }
@@ -146,6 +148,16 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 	res := &RPackLockFileIntegrity{}
 	cleanBase := filepath.Clean(path)
 	for _, file := range f.Files {
+		// Recorded modes must be canonical executable-intent records
+		// ("644"/"755") or empty (unknown, pre-feature entry). Legacy
+		// non-canonical records are pre-migration lockfile state and
+		// hard-error with a migration hint: this is deliberately not
+		// drift-classified, so --force cannot silently rewrite a recorded
+		// permission guarantee (issue #15). Invalid values are rejected
+		// with a clear message; YAML decoding itself never fails on them.
+		if err := checkRecordedMode(file.Mode); err != nil {
+			return nil, fmt.Errorf("lockfile entry %s: %w", file.Path, err)
+		}
 		filePath := filepath.Join(cleanBase, file.Path)
 		if err := util.CheckFileExists(filePath); err != nil {
 			res.Removed = append(res.Removed, file.Path)
@@ -172,8 +184,11 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 		if statErr != nil {
 			return nil, fmt.Errorf("could not stat %s: %s: %w", file.Path, filePath, statErr)
 		}
-		if onDisk := FormatMode(info.Mode()); onDisk != file.Mode {
-			res.ModeModified = append(res.ModeModified, fmt.Sprintf("%s (recorded %s, on disk %s)", file.Path, file.Mode, onDisk))
+		// Compare executable intent, not literal rwx bits: read/write
+		// differences from local policy (umask, ACLs) are not drift, a
+		// changed owner-execute bit is (issue #15).
+		if onDisk := CanonicalMode(info.Mode()); onDisk != file.Mode {
+			res.ModeModified = append(res.ModeModified, modeDriftMessage(file.Path, file.Mode, onDisk))
 		}
 	}
 	return res, nil

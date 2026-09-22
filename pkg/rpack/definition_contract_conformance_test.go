@@ -15,6 +15,8 @@ func TestDefinitionContractV1Conformance(t *testing.T) {
 local rpack = require("rpack.v1")
 local rendered = rpack.template("hello {{.name}}", {name = "v1"})
 rpack.write("contract.sh", rendered, {mode = "755"})
+rpack.write("intent.sh", rendered, {executable = true})
+rpack.write("plain.txt", rendered)
 `,
 	})
 	target := t.TempDir()
@@ -30,13 +32,23 @@ rpack.write("contract.sh", rendered, {mode = "755"})
 	if got, want := string(content), "hello v1"; got != want {
 		t.Fatalf("content = %q, want %q", got, want)
 	}
-	info, err := os.Stat(outputPath)
-	if err != nil {
-		t.Fatal(err)
+	// Assert the emitted files' owner-execute classification, not exact
+	// staging modes: materialization of the canonical intents is
+	// environment policy (issue #15), so 0755, 0775, and 0700 are all
+	// conforming executable outputs.
+	assertCanonicalMode := func(name, want string) {
+		t.Helper()
+		info, err := os.Stat(filepath.Join(target, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := CanonicalMode(info.Mode()); got != want {
+			t.Fatalf("%s canonical mode = %q (perm %o), want %q", name, got, info.Mode().Perm(), want)
+		}
 	}
-	if got, want := info.Mode().Perm(), os.FileMode(0o755); got != want {
-		t.Fatalf("mode = %o, want %o", got, want)
-	}
+	assertCanonicalMode("contract.sh", "755")
+	assertCanonicalMode("intent.sh", "755")
+	assertCanonicalMode("plain.txt", "644")
 }
 
 func TestDefinitionContractV1RejectsLuaModuleMismatchBeforeRelocation(t *testing.T) {

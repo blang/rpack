@@ -5,6 +5,8 @@
 --
 -- Output file handles allow `temp:file`, `./dir/myfile` (target location)
 -- Input file handles can be `map:mapped-file`, `map:mapped-dir/myfile`, `temp:dir/file`, `rpack:dir/file-from-rpack-source`.
+-- Output files carry an executable intent (the owner-execute bit, like git);
+-- read/write bits follow the destination's local creation policy (umask), not the script.
 -- @module rpack.v1
 
 local rpack = {}
@@ -24,21 +26,27 @@ function rpack.values() end
 --- Copies an file from source to destination
 --- @param inputfile string The source file.
 --- @param outputfile string Destination file of copy.
---- @param[opt] opts table Options: `mode` — octal permission string like `"755"` applied to the destination after copying (see `rpack.chmod`).
+--- @param[opt] opts table Options: `executable` — boolean (default `false`) marking
+--- the destination as an executable file. `mode` — compatibility alias, not a literal
+--- chmod: only `"644"`/`"0644"` (non-executable) or `"755"`/`"0755"` (executable) are
+--- accepted. `executable` and `mode` together are rejected. Exact permission modes
+--- are not supported — manage private/deployment permissions outside rpack.
 function rpack.copy(inputfile, outputfile, opts) end
 
---- Change the permission bits of an already-written output file.
---- The mode is an octal string of exactly 3 digits like `"755"` or `"600"`
---- (special bits are not supported; the file must stay owner-readable).
---- Only target paths (`./file`) and `temp:` files can be chmod'ed;
+--- Declare the executable intent of an already-written output file.
+--- The `mode` argument is a compatibility alias, not a literal chmod: only
+--- `"644"`/`"0644"` (non-executable) and `"755"`/`"0755"` (executable) are
+--- accepted; exact modes like `"600"` are rejected. Read/write bits are not
+--- managed and follow the destination's local creation policy (umask).
+--- Only target paths (`./file`) and `temp:` files can be changed;
 --- `rpack:` and `map:` are read-only. Directories are not supported.
---- ORDERING RULE: chmod applies to the current staged content only —
---- a later `write`/`copy` to the same path resets the mode to `644`,
---- so chmod after your last write.
---- Note: chmod'ing a `temp:` file does not propagate the mode through a
---- later `copy` (copy always produces `644` unless given `opts.mode`).
---- @param file string The file to chmod (must already be written).
---- @param mode string Octal permission string, e.g. `"755"`.
+--- ORDERING RULE: the declaration applies to the current staged content only —
+--- a later `write`/`copy` to the same path resets the intent to non-executable,
+--- so declare after your last write.
+--- Note: declaring intent on a `temp:` file does not propagate through a
+--- later `copy` (copy's own options decide).
+--- @param file string The file to declare intent for (must already be written).
+--- @param mode string Compatibility alias: `"644"` (non-executable) or `"755"` (executable).
 function rpack.chmod(file, mode) end
 
 --- Convert yaml to table
@@ -91,7 +99,11 @@ function rpack.read(file) end
 --- Write a string to a file
 --- @param file string The file to write to.
 --- @param str string The string to write.
---- @param[opt] opts table Options: `mode` — octal permission string like `"755"` applied after writing (see `rpack.chmod`).
+--- @param[opt] opts table Options: `executable` — boolean (default `false`) marking
+--- the output as an executable file. `mode` — compatibility alias, not a literal
+--- chmod: only `"644"`/`"0644"` (non-executable) or `"755"`/`"0755"` (executable) are
+--- accepted. `executable` and `mode` together are rejected. Exact permission modes
+--- are not supported — manage private/deployment permissions outside rpack.
 function rpack.write(file, str, opts) end
 
 --- Template string contents with data.

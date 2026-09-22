@@ -108,7 +108,7 @@ func (fs *RPackFS) TargetWriteHandles() []FSHandle {
 type FS interface {
 	Write(name string, b []byte) error
 	Read(name string) ([]byte, error)
-	// Chmod sets the permission bits of an existing staged file (ADR 0001).
+	// Chmod sets canonical executable intent for an existing staged file (ADR 0002).
 	// It is recorded and access-controlled as a Write.
 	Chmod(name string, mode os.FileMode) error
 	Stat(name string) (exists, dir bool, err error)
@@ -133,8 +133,8 @@ func NewInMemoryFS() *InMemoryFS {
 type InMemoryFSEntry struct {
 	Content []byte
 	IsDir   bool
-	// Mode mirrors the real FS semantics: Write resets it to the canonical
-	// default 0644, Chmod amends it (ADR 0001 reset-on-write).
+	// Mode is canonical executable intent: Write resets to non-executable,
+	// Chmod amends it. Physical staging permissions are not output intent.
 	Mode os.FileMode
 }
 
@@ -155,7 +155,7 @@ func (fs *InMemoryFS) Write(name string, b []byte) error {
 	}
 	entry.Content = make([]byte, len(b))
 	copy(entry.Content, b)
-	entry.Mode = 0o644
+	entry.Mode = NonExecutableMode
 	return nil
 }
 
@@ -168,6 +168,9 @@ func (fs *InMemoryFS) Chmod(name string, mode os.FileMode) error {
 	}
 	if entry.IsDir {
 		return fmt.Errorf("cannot chmod %s: chmod on directories is not supported", name)
+	}
+	if err := validateOutputMode(mode); err != nil {
+		return err
 	}
 	entry.Mode = mode
 	return nil
@@ -243,7 +246,7 @@ func (fs *BaseFS) Write(name string, b []byte) error {
 	return handle.Write(b)
 }
 
-// Chmod sets the permission bits of an existing staged file (ADR 0001).
+// Chmod sets executable intent for an existing staged file (ADR 0002).
 // Ordering is deliberate: the shared writability check runs first so read-only
 // resolvers (rpack:/map:) always get the canonical access refusal; the
 // pre-hook existence check then guarantees the "write it first" message and
@@ -267,6 +270,9 @@ func (fs *BaseFS) Chmod(name string, mode os.FileMode) error {
 	}
 	if dir {
 		return fmt.Errorf("cannot chmod %s: chmod on directories is not supported", handle.FriendlyPath())
+	}
+	if err := validateOutputMode(mode); err != nil {
+		return err
 	}
 	for _, hook := range fs.Hooks {
 		if err := hook.Write(handle); err != nil {
@@ -415,6 +421,9 @@ type FSResolver interface {
 // using simple filepath actions.
 // Implements FSResolver.
 type FileBackedFSResolver struct {
+	// Stable handles share the final intent across aliases, repeated writes,
+	// and recorder entries. Never reconstruct intent from staging permissions.
+	handles map[string]*FileBackedFSHandle
 	name    string
 	prefix  string
 	baseDir string
@@ -429,6 +438,7 @@ func NewFileBackedFSResolver(name, prefix, baseDir string) *FileBackedFSResolver
 		name:    name,
 		prefix:  prefix,
 		baseDir: baseDir,
+		handles: make(map[string]*FileBackedFSHandle),
 	}
 }
 
@@ -449,7 +459,15 @@ func (r *FileBackedFSResolver) Resolve(name string) (FSHandle, bool, error) {
 	absPath := filepath.Join(r.baseDir, cleanPath)
 	friendlyPath := r.prefix + cleanPath
 	indirectTargetPath := cleanPath
-	return NewFileBackedFSHandle(absPath, friendlyPath, r.name, indirectTargetPath), true, nil
+	if handle, ok := r.handles[cleanPath]; ok {
+		return handle, true, nil
+	}
+	handle := NewFileBackedFSHandle(absPath, friendlyPath, r.name, indirectTargetPath)
+	if r.handles == nil {
+		r.handles = make(map[string]*FileBackedFSHandle)
+	}
+	r.handles[cleanPath] = handle
+	return handle, true, nil
 }
 
 // MapFSResolverPrefix is the prefix for map-based resolver lookups.

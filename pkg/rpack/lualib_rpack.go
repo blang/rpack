@@ -90,8 +90,9 @@ func (a *RPackAPI) luaWrite(L *lua.LState) int {
 	return 0
 }
 
-// luaChmod implements rpack.chmod(path, mode) (ADR 0001). It amends the mode
-// of an already-staged file; a later write resets the mode to 0644.
+// luaChmod implements rpack.chmod(path, mode) (issue #15). It amends the
+// mode of an already-staged file; a later write resets the mode to the
+// canonical non-executable default.
 func (a *RPackAPI) luaChmod(L *lua.LState) int {
 	checkLuaArity(L, 2, 2)
 	friendly := L.CheckString(1)
@@ -103,11 +104,13 @@ func (a *RPackAPI) luaChmod(L *lua.LState) int {
 	return 0
 }
 
-// applyOptsMode applies the optional opts-table mode after a successful
-// write/copy. The chmod goes through the same fs.Chmod path as rpack.chmod,
-// so access control, purity tracking, and recording treat both spellings
-// identically. Parse errors are attributed to the opts argument by
-// checkOptsMode; a filesystem failure here raises with the friendly path.
+// applyOptsMode applies the permission intent parsed from the trailing
+// options table after a successful write/copy. Both spellings — mode and
+// executable — resolve to one canonical os.FileMode that goes through the
+// same fs.Chmod path as rpack.chmod, so access control, purity tracking,
+// and recording treat all three identically. Parse errors are attributed
+// to the opts argument by checkOptsMode; a filesystem failure here raises
+// with the friendly path.
 func (a *RPackAPI) applyOptsMode(L *lua.LState, friendly string, mode os.FileMode, hasMode bool) {
 	if !hasMode {
 		return
@@ -117,9 +120,9 @@ func (a *RPackAPI) applyOptsMode(L *lua.LState, friendly string, mode os.FileMod
 	}
 }
 
-// checkModeArg parses a required mode argument (octal string like "755").
-// Numbers are rejected deliberately: decimal 493 is unreadable, which is why
-// the grammar exists (ADR 0001).
+// checkModeArg parses a required mode argument (canonical octal string
+// alias "644" or "755"). Numbers are rejected deliberately: decimal 493 is
+// unreadable, which is why the string grammar exists.
 func checkModeArg(L *lua.LState, n int) os.FileMode {
 	str, ok := L.Get(n).(lua.LString)
 	if !ok {
@@ -135,32 +138,71 @@ func checkModeArg(L *lua.LState, n int) os.FileMode {
 }
 
 // checkOptsMode parses the optional trailing options table at argument n,
-// returning the requested mode and whether one was given. An absent argument
-// or nil means no options; an empty table is a valid no-op. Unknown keys are
-// hard errors (rpack's explicitness rule: a typo'd key must not be silently
-// ignored, and future keys like preserve_mode must not collide).
+// returning the canonical mode to apply and whether an explicit permission
+// option was given. An absent argument or nil means no options; an empty
+// table is a valid no-op (the write's own reset establishes the
+// non-executable default).
+//
+// Rules (issue #15):
+//   - mode: a canonical octal string alias "644"/"0644"/"755"/"0755";
+//     numbers and any other value are errors.
+//   - executable: a strict boolean; true maps to ExecutableMode, false to
+//     NonExecutableMode.
+//   - mode and executable are mutually exclusive, even when they agree:
+//     two spellings of one intent invite drift.
+//   - Unknown keys are hard errors (rpack's explicitness rule: a typo'd
+//     key must not be silently ignored).
+//
+// The whole table is validated here, before write/copy perform any
+// filesystem mutation.
 func checkOptsMode(L *lua.LState, n int) (mode os.FileMode, hasMode bool) {
 	if L.GetTop() < n || L.Get(n) == lua.LNil {
 		return 0, false
 	}
 	tbl := L.CheckTable(n)
+	var hasModeKey, hasExecutableKey bool
 	tbl.ForEach(func(k, v lua.LValue) {
 		key, ok := k.(lua.LString)
-		if !ok || string(key) != "mode" {
-			L.ArgError(n, fmt.Sprintf("unknown option %q (known: mode)", k.String()))
-			return
-		}
-		str, ok := v.(lua.LString)
 		if !ok {
-			L.ArgError(n, "mode must be an octal string like \"755\"")
+			L.ArgError(n, fmt.Sprintf("unknown option %q (known: executable, mode)", k.String()))
 			return
 		}
-		m, err := ParseOctalMode(string(str))
-		if err != nil {
-			L.ArgError(n, err.Error())
-			return
+		switch string(key) {
+		case "mode":
+			if hasExecutableKey {
+				L.ArgError(n, "mode and executable are mutually exclusive; use one, not both")
+				return
+			}
+			str, ok := v.(lua.LString)
+			if !ok {
+				L.ArgError(n, "mode must be an octal string like \"755\"")
+				return
+			}
+			m, err := ParseOctalMode(string(str))
+			if err != nil {
+				L.ArgError(n, err.Error())
+				return
+			}
+			mode, hasModeKey, hasMode = m, true, true
+		case "executable":
+			if hasModeKey {
+				L.ArgError(n, "mode and executable are mutually exclusive; use one, not both")
+				return
+			}
+			b, ok := v.(lua.LBool)
+			if !ok {
+				L.ArgError(n, "executable must be a boolean (true or false)")
+				return
+			}
+			if bool(b) {
+				mode = ExecutableMode
+			} else {
+				mode = NonExecutableMode
+			}
+			hasExecutableKey, hasMode = true, true
+		default:
+			L.ArgError(n, fmt.Sprintf("unknown option %q (known: executable, mode)", string(key)))
 		}
-		mode, hasMode = m, true
 	})
 	return mode, hasMode
 }

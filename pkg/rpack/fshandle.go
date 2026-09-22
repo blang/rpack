@@ -21,9 +21,12 @@ type FSHandle interface {
 	IndirectTargetPath() string
 	Read() ([]byte, error)
 	Write([]byte) error
-	// Chmod sets the file's permission bits. The handle must point to an
-	// existing regular file; BaseFS.Chmod enforces that before calling.
+	// Chmod sets executable intent, not the physical staging permissions.
+	// The handle must point to an existing regular file; BaseFS.Chmod enforces
+	// the access and existence restrictions before calling.
 	Chmod(mode os.FileMode) error
+	// OutputMode is canonical executable intent, independent of staging stat.
+	OutputMode() os.FileMode
 	Stat() (exists bool, dir bool, err error)
 	ReadDir() (files []FSHandle, dirs []FSHandle, err error)
 	Transfer(absPath string) error // Transfers a file to a target file location - used for later on relocating
@@ -39,6 +42,7 @@ type FileBackedFSHandle struct {
 	resolver     string
 	// Contains the indirect path to the target (repo) if exists
 	indirectTargetPath string
+	outputMode         os.FileMode
 }
 
 // NewFileBackedFSHandle creates a new file-backed filesystem handle.
@@ -49,6 +53,7 @@ func NewFileBackedFSHandle(absPath, friendlyPath, resolver, indirectTargetPath s
 		friendlyPath:       friendlyPath,
 		resolver:           resolver,
 		indirectTargetPath: indirectTargetPath,
+		outputMode:         NonExecutableMode,
 	}
 }
 
@@ -71,33 +76,38 @@ func (f *FileBackedFSHandle) Read() ([]byte, error) {
 }
 
 func (f *FileBackedFSHandle) Write(b []byte) error {
-	if err := os.MkdirAll(filepath.Dir(f.absPath), 0o755); err != nil { //nolint:gosec // intentional: standard directory permissions
+	if err := os.MkdirAll(filepath.Dir(f.absPath), 0o700); err != nil {
 		return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
 	}
-	if err := os.WriteFile(f.absPath, b, 0o644); err != nil { //nolint:gosec // intentional: standard file permissions for package manager output
+	// Staging is private even when the final output is executable or public.
+	// Recreate rather than truncating, so an old inode's permissions never leak.
+	if err := writeCreatedFile(f.absPath, b, 0o600, NonExecutableMode); err != nil {
 		return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
 	}
-	// Normalize staged target outputs to the canonical default mode (ADR 0001):
-	// os.WriteFile applies its perm only at creation and through the process
-	// umask, so without this explicit chmod the staged mode would depend on
-	// the caller's umask and on whether the file pre-existed. The explicit
-	// chmod makes every target write deterministic and implements
-	// reset-on-write: a write always re-establishes 0644, discarding earlier
-	// chmods. Temp files are excluded so they keep umask-provided privacy.
-	if f.resolver == TargetResolver {
-		if err := os.Chmod(f.absPath, 0o644); err != nil { //nolint:gosec // intentional: canonical default mode for package manager output
-			return fmt.Errorf("could not write %s: %w", f.friendlyPath, err)
-		}
-	}
+	f.outputMode = NonExecutableMode
 	return nil
 }
 
-// Chmod sets the file's permission bits on the backing file.
+// Chmod amends metadata only. Final creation applies the caller's umask to the
+// appropriate Git-style base mode; staging never needs to become executable.
 func (f *FileBackedFSHandle) Chmod(mode os.FileMode) error {
-	if err := os.Chmod(f.absPath, mode); err != nil {
+	if err := validateOutputMode(mode); err != nil {
+		return err
+	}
+	info, err := os.Stat(f.absPath)
+	if err != nil {
 		return fmt.Errorf("could not chmod %s: %w", f.friendlyPath, err)
 	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("cannot chmod %s: not a regular file", f.friendlyPath)
+	}
+	f.outputMode = mode
 	return nil
+}
+
+// OutputMode returns the last successful write/chmod's canonical intent.
+func (f *FileBackedFSHandle) OutputMode() os.FileMode {
+	return f.outputMode
 }
 
 // Stat returns file existence and directory status.
@@ -140,12 +150,15 @@ func (f *FileBackedFSHandle) IndirectTargetPath() string {
 	return f.indirectTargetPath
 }
 
-// Transfer copies the file to the target path.
-// TODO: Might not be used since we implement renaming through IndirectTargetPath
+// Transfer materializes the declared output and removes its staged copy.
 func (f *FileBackedFSHandle) Transfer(dest string) error {
-	err := os.Rename(f.absPath, dest)
+	content, err := f.Read()
+	if err != nil {
+		return err
+	}
+	err = writeOutputFile(dest, content, f.OutputMode())
 	if err != nil {
 		return fmt.Errorf("failed to transfer %s to %s: %w", f.friendlyPath, dest, err)
 	}
-	return nil
+	return os.Remove(f.absPath)
 }

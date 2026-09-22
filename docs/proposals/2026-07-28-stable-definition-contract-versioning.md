@@ -128,7 +128,7 @@ This rule is explicit and requires no script-content inspection. rpack never sca
 ### Before binary v1.0.0
 
 - Definition contract v1 remains unstable and may gain or change behavior.
-- File permissions (`rpack.chmod` and `{ mode = ... }`) become part of v1.
+- File permissions become part of v1, refined while unstable by [issue #15](https://github.com/blang/rpack/issues/15) from the earlier exact-mode design to executable intent: a strict `executable` boolean on `write`/`copy`, with `mode`/`chmod` as compatibility aliases restricted to `"644"`/`"755"` (no exact modes). See [ADR 0002](../adr/0002-executable-output-intent.md).
 - A `0.x` definition may require a sufficiently recent `0.x` binary; no forward-compatibility guarantee is made between prerelease runtimes.
 - The release notes and docs must continue to state that v1 is not frozen until binary v1.0.0.
 
@@ -261,7 +261,7 @@ Remaining v1.0.0 release gates are process rather than architecture:
 2. Keep expanding the v1 conformance corpus as bugs or ambiguities are found.
 3. Declare v1 frozen only when binary v1.0.0 is released.
 
-The permissions feature requires no v2 migration now: it lands while v1 is explicitly unstable and becomes part of the contract frozen at v1.0.0.
+The permissions feature requires no v2 migration now: it lands while v1 is explicitly unstable and becomes part of the contract frozen at v1.0.0. The issue #15 refinement to executable-intent semantics lands the same way — as a documented change to the unstable v1 baseline, not as a new contract version.
 
 ## 12. Validation Experiment: Adding Contract v2
 

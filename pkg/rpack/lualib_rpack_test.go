@@ -261,7 +261,7 @@ func TestRPackAPICopy(t *testing.T) {
 	}
 }
 
-// --- chmod & mode options (ADR 0001) ----------------------------------------
+// --- chmod & permission options (issue #15) ----------------------------------
 
 // newLuaTestAPI wires an RPackAPI backed by an InMemoryFS into a Lua state
 // with the given global function names bound.
@@ -305,7 +305,9 @@ func TestRPackAPIChmodErrors(t *testing.T) {
 		{"non-string mode", `chmod("f", 493)`, `mode must be an octal string like "755"`},
 		{"invalid octal", `chmod("f", "88x")`, `invalid mode "88x"`},
 		{"special bits", `chmod("f", "1755")`, "special mode bits"},
-		{"owner-unreadable", `chmod("f", "000")`, "owner-readable"},
+		{"exact mode removed", `chmod("f", "600")`, `unsupported exact mode "600"`},
+		{"owner-unreadable now unsupported", `chmod("f", "000")`, `unsupported exact mode "000"`},
+		{"world-writable unsupported", `chmod("f", "777")`, `unsupported exact mode "777"`},
 		{"directory", `chmod("adir", "755")`, "directories is not supported"},
 	}
 	for _, tc := range tests {
@@ -322,59 +324,98 @@ func TestRPackAPIChmodErrors(t *testing.T) {
 	}
 }
 
+// TestRPackAPIWriteWithModeOpt pins the issue #15 option surface: mode is a
+// canonical alias, executable is a strict boolean, and both resolve to the
+// same two canonical modes. The default (no options or empty table) is the
+// non-executable mode established by the write's own reset.
 func TestRPackAPIWriteWithModeOpt(t *testing.T) {
 	fs := NewInMemoryFS()
 	api := NewRPackAPI(fs)
 	L := newLuaTestAPI(t, fs, map[string]lua.LGFunction{"write": api.luaWrite})
 	script := `
 		write("deploy.sh", "#!/bin/sh\n", {mode = "755"})
-		write("plain.txt", "hi", {mode = "600"})
+		write("alias.sh", "#!/bin/sh\n", {mode = "0755"})
+		write("exec.sh", "#!/bin/sh\n", {executable = true})
+		write("plain.txt", "hi", {mode = "644"})
+		write("zero.txt", "hi", {mode = "0644"})
+		write("noexec.sh", "#!/bin/sh\n", {executable = false})
 		write("noop.txt", "hi", {})
 		write("default.txt", "hi")
 	`
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
 	}
-	if got := fs.Tree["deploy.sh"].Mode; got != 0o755 {
-		t.Errorf("deploy.sh mode = %o, want 755", got)
+	executable := []string{"deploy.sh", "alias.sh", "exec.sh"}
+	for _, name := range executable {
+		if got := fs.Tree[name].Mode; got != ExecutableMode {
+			t.Errorf("%s mode = %o, want 755", name, got)
+		}
 	}
-	if got := fs.Tree["plain.txt"].Mode; got != 0o600 {
-		t.Errorf("plain.txt mode = %o, want 600", got)
-	}
-	if got := fs.Tree["noop.txt"].Mode; got != 0o644 {
-		t.Errorf("noop.txt mode = %o, want 644 (empty opts is a no-op)", got)
-	}
-	if got := fs.Tree["default.txt"].Mode; got != 0o644 {
-		t.Errorf("default.txt mode = %o, want 644", got)
+	nonExecutable := []string{"plain.txt", "zero.txt", "noexec.sh", "noop.txt", "default.txt"}
+	for _, name := range nonExecutable {
+		if got := fs.Tree[name].Mode; got != NonExecutableMode {
+			t.Errorf("%s mode = %o, want 644", name, got)
+		}
 	}
 }
 
+// TestRPackAPICopyWithModeOpt pins copy's option surface and the no-inheritance
+// rule: without options a copy lands at the canonical default, never at the
+// source's mode.
 func TestRPackAPICopyWithModeOpt(t *testing.T) {
 	fs := NewInMemoryFS()
 	_ = fs.Write("src.sh", []byte("#!/bin/sh\n"))
+	// Make the source executable: a plain copy must not inherit this.
+	if err := fs.Chmod("src.sh", ExecutableMode); err != nil {
+		t.Fatal(err)
+	}
 	api := NewRPackAPI(fs)
 	L := newLuaTestAPI(t, fs, map[string]lua.LGFunction{"copy": api.luaCopy})
-	if err := L.DoString(`copy("src.sh", "dst.sh", {mode = "755"})`); err != nil {
+	script := `
+		copy("src.sh", "dst.sh", {mode = "755"})
+		copy("src.sh", "alias.sh", {mode = "0755"})
+		copy("src.sh", "exec.sh", {executable = true})
+		copy("src.sh", "plain.sh", {executable = false})
+		copy("src.sh", "noexec.txt", {mode = "644"})
+		copy("src.sh", "default.sh")
+	`
+	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
 	}
-	e := fs.Tree["dst.sh"]
-	if string(e.Content) != "#!/bin/sh\n" {
-		t.Errorf("dst.sh content = %q", e.Content)
+	for _, name := range []string{"dst.sh", "alias.sh", "exec.sh"} {
+		e := fs.Tree[name]
+		if string(e.Content) != "#!/bin/sh\n" {
+			t.Errorf("%s content = %q", name, e.Content)
+		}
+		if e.Mode != ExecutableMode {
+			t.Errorf("%s mode = %o, want 755", name, e.Mode)
+		}
 	}
-	if e.Mode != 0o755 {
-		t.Errorf("dst.sh mode = %o, want 755", e.Mode)
+	for _, name := range []string{"plain.sh", "noexec.txt", "default.sh"} {
+		if got := fs.Tree[name].Mode; got != NonExecutableMode {
+			t.Errorf("%s mode = %o, want 644 (no source-mode inheritance)", name, got)
+		}
 	}
 }
 
+// TestRPackAPIOptsErrors pins option validation: unknown keys, wrong types,
+// removed exact modes, and mode/executable mutual exclusion — all rejected
+// before any file is written.
 func TestRPackAPIOptsErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		script  string
 		wantErr string
 	}{
-		{"unknown key typo", `write("f", "x", {mdoe = "755"})`, `unknown option "mdoe" (known: mode)`},
+		{"unknown key typo", `write("f", "x", {mdoe = "755"})`, `unknown option "mdoe" (known: executable, mode)`},
+		{"unknown key executable typo", `write("f", "x", {executabel = true})`, `unknown option "executabel" (known: executable, mode)`},
 		{"non-string mode", `write("f", "x", {mode = 493})`, `mode must be an octal string like "755"`},
 		{"invalid mode value", `write("f", "x", {mode = "999"})`, `invalid mode "999"`},
+		{"exact mode removed", `write("f", "x", {mode = "600"})`, `unsupported exact mode "600"`},
+		{"non-bool executable string", `write("f", "x", {executable = "true"})`, "executable must be a boolean"},
+		{"non-bool executable number", `write("f", "x", {executable = 1})`, "executable must be a boolean"},
+		{"mode and executable", `write("f", "x", {mode = "755", executable = true})`, "mutually exclusive"},
+		{"mode and executable agreeing", `write("f", "x", {mode = "644", executable = false})`, "mutually exclusive"},
 		{"string instead of table", `write("f", "x", "755")`, "table expected"},
 	}
 	for _, tc := range tests {
@@ -386,7 +427,31 @@ func TestRPackAPIOptsErrors(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
 			}
+			// The complete options table is validated before filesystem
+			// mutation: a rejected write must not stage the file.
+			if _, exists := fs.Tree["f"]; exists {
+				t.Fatal("write staged the file before rejecting invalid options")
+			}
 		})
+	}
+}
+
+// TestRPackAPICopyOptsErrorBeforeMutation pins that copy validates its whole
+// options table before touching the filesystem: an invalid option must
+// reject the copy without staging the target.
+func TestRPackAPICopyOptsErrorBeforeMutation(t *testing.T) {
+	fs := NewInMemoryFS()
+	if err := fs.Write("src.txt", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	api := NewRPackAPI(fs)
+	L := newLuaTestAPI(t, fs, map[string]lua.LGFunction{"copy": api.luaCopy})
+	err := L.DoString(`copy("src.txt", "dst.txt", {mode = "600"})`)
+	if err == nil || !strings.Contains(err.Error(), `unsupported exact mode "600"`) {
+		t.Fatalf("want unsupported exact mode error, got %v", err)
+	}
+	if _, exists := fs.Tree["dst.txt"]; exists {
+		t.Fatal("copy staged the target before rejecting invalid options")
 	}
 }
 
@@ -436,6 +501,10 @@ func TestDefinitionContractV1RejectsExtraLuaArguments(t *testing.T) {
 	}
 }
 
+// TestRPackAPIWriteAfterChmodResets pins the ordering rule (issue #15): a
+// fresh write establishes its own intent (non-executable by default), and a
+// later chmod or permission option amends it. Both spellings — mode alias
+// and executable boolean — reset and amend identically.
 func TestRPackAPIWriteAfterChmodResets(t *testing.T) {
 	fs := NewInMemoryFS()
 	api := NewRPackAPI(fs)
@@ -444,14 +513,33 @@ func TestRPackAPIWriteAfterChmodResets(t *testing.T) {
 		"chmod": api.luaChmod,
 	})
 	script := `
-		write("f.sh", "v1")
-		chmod("f.sh", "755")
-		write("f.sh", "v2")
+		-- chmod after write amends; a later plain write resets.
+		write("a.sh", "v1")
+		chmod("a.sh", "755")
+		write("a.sh", "v2")
+
+		-- executable option after write amends; a later plain write resets.
+		write("b.sh", "v1", {executable = true})
+		write("b.sh", "v2")
+
+		-- mode alias behaves the same.
+		write("c.sh", "v1", {mode = "0755"})
+		write("c.sh", "v2")
+
+		-- a reset write can be re-amended by a new option.
+		write("d.sh", "v1", {executable = true})
+		write("d.sh", "v2")
+		write("d.sh", "v3", {executable = true})
 	`
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
 	}
-	if got := fs.Tree["f.sh"].Mode; got != 0o644 {
-		t.Fatalf("mode = %o, want 644 (a write resets the mode)", got)
+	for _, name := range []string{"a.sh", "b.sh", "c.sh"} {
+		if got := fs.Tree[name].Mode; got != NonExecutableMode {
+			t.Errorf("%s mode = %o, want 644 (a write resets the mode)", name, got)
+		}
+	}
+	if got := fs.Tree["d.sh"].Mode; got != ExecutableMode {
+		t.Errorf("d.sh mode = %o, want 755 (option after reset amends)", got)
 	}
 }

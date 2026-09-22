@@ -248,21 +248,21 @@ func mapInputName(fp string) string {
 // was taken, signaling the caller that the lockfile-protected file-move or CWD
 // copy must NOT run. On the error path it returns (false, execErr) so the caller
 // can return the error unchanged.
-func (e *Executor) finalizeOutput(result *execResult, runDir string, execErr error) (bool, error) {
+func (e *Executor) finalizeOutput(result *execResult, runDir string, modes map[string]string, execErr error) (bool, error) {
 	if execErr != nil {
 		writeErrorMeta(e.OutputDir, result, execErr)
 		return false, execErr
 	}
 	if e.DryRun {
 		if e.OutputDir != "" {
-			if err := copyDir(runDir, e.OutputDir); err != nil {
+			if err := copyDir(runDir, e.OutputDir, modes); err != nil {
 				return false, fmt.Errorf("failed to copy files to output directory: %w", err)
 			}
 			if err := writeMetaJSON(e.OutputDir, result, nil); err != nil {
 				return false, err
 			}
 		}
-		return true, printDryRunOutput(runDir)
+		return true, printDryRunOutput(runDir, modes)
 	}
 	if e.OutputDir != "" {
 		if err := assertOutputDirEmpty(e.OutputDir, e.Force); err != nil {
@@ -271,7 +271,7 @@ func (e *Executor) finalizeOutput(result *execResult, runDir string, execErr err
 		if err := os.MkdirAll(e.OutputDir, 0o755); err != nil { //nolint:gosec // standard permissions
 			return false, fmt.Errorf("could not create output directory: %s: %w", e.OutputDir, err)
 		}
-		if err := copyDir(runDir, e.OutputDir); err != nil {
+		if err := copyDir(runDir, e.OutputDir, modes); err != nil {
 			return false, fmt.Errorf("failed to copy files to output directory: %w", err)
 		}
 		return true, writeMetaJSON(e.OutputDir, result, nil)
@@ -312,7 +312,7 @@ func assertOutputDirEmpty(outputDir string, force bool) error {
 
 // printDryRunOutput prints all files in runDir to stdout in a
 // deterministic format suitable for human inspection.
-func printDryRunOutput(runDir string) error {
+func printDryRunOutput(runDir string, modes map[string]string) error {
 	var files []string
 	err := filepath.Walk(runDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -340,13 +340,12 @@ func printDryRunOutput(runDir string) error {
 		if rdErr != nil {
 			return fmt.Errorf("failed to read file: %s: %w", relPath, rdErr)
 		}
-		info, statErr := os.Stat(absPath)
-		if statErr != nil {
-			return fmt.Errorf("failed to stat file: %s: %w", relPath, statErr)
+		mode, modeErr := declaredOutputMode(modes, absPath)
+		if modeErr != nil {
+			return modeErr
 		}
-		// The header shows the mode: dry-run's contract is to show what would
-		// land, and mode now lands (ADR 0001).
-		fmt.Printf("=== ./%s (mode %s) ===\n", relPath, FormatMode(info.Mode()))
+		// Staging is private; show declared intent, not incidental inode bits.
+		fmt.Printf("=== ./%s (%s) ===\n", relPath, modeIntent(CanonicalMode(mode)))
 		_, _ = os.Stdout.Write(content)
 		fmt.Println()
 	}
@@ -395,8 +394,9 @@ func writeMetaJSON(outputDir string, result *execResult, execErr error) error {
 	return nil
 }
 
-// copyDir copies all files from src to dst, creating directories as needed.
-func copyDir(src, dst string) error {
+// copyDir materializes staged files using explicit executable intent. It never
+// infers permissions from the staging filesystem or the overwritten inode.
+func copyDir(src, dst string, modes map[string]string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -411,24 +411,38 @@ func copyDir(src, dst string) error {
 			return os.MkdirAll(targetPath, 0o755) //nolint:gosec // standard permissions
 		}
 
-		content, rdErr := os.ReadFile(path) //nolint:gosec // path from Walk, trusted source
-		if rdErr != nil {
-			return fmt.Errorf("failed to read: %s: %w", path, rdErr)
-		}
-		if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkErr != nil { //nolint:gosec // standard permissions
-			return fmt.Errorf("failed to create dir: %s: %w", filepath.Dir(targetPath), mkErr)
-		}
-		if wrErr := os.WriteFile(targetPath, content, 0o644); wrErr != nil { //nolint:gosec // standard permissions
-			return fmt.Errorf("failed to write: %s: %w", targetPath, wrErr)
-		}
-		// Propagate the staged file's mode (ADR 0001). os.WriteFile's perm is
-		// creation-only, so without this explicit chmod a --force rerun into an
-		// existing output would keep the previous run's stale mode.
-		if chErr := os.Chmod(targetPath, info.Mode().Perm()); chErr != nil {
-			return fmt.Errorf("failed to set mode: %s: %w", targetPath, chErr)
-		}
-		return nil
+		return copyOutputFile(path, targetPath, modes)
 	})
+}
+
+func declaredOutputMode(modes map[string]string, path string) (os.FileMode, error) {
+	mode, ok := modes[path]
+	if !ok {
+		return 0, fmt.Errorf("missing executable intent for staged file %s", path)
+	}
+	return ParseOctalMode(mode)
+}
+
+func copyOutputFile(src, dst string, modes map[string]string) error {
+	mode, err := declaredOutputMode(modes, src)
+	if err != nil {
+		return err
+	}
+	content, err := os.ReadFile(src) //nolint:gosec // trusted staged output
+	if err != nil {
+		return fmt.Errorf("failed to read staged output %s: %w", src, err)
+	}
+	return writeOutputFile(dst, content, mode)
+}
+
+func outputModes(fs *RPackFS, runDir string) map[string]string {
+	modes := make(map[string]string)
+	if fs != nil {
+		for _, handle := range fs.TargetWriteHandles() {
+			modes[filepath.Join(runDir, handle.IndirectTargetPath())] = CanonicalMode(handle.OutputMode())
+		}
+	}
+	return modes
 }
 
 // ExecRPack loads and executes an rpack from the
@@ -454,7 +468,7 @@ func (e *Executor) ExecRPack(ctx context.Context, name string) error {
 
 	fs, result, execErr := e.execCore(ctx, pi.SourcePath, pi.RunPath, pi.TempPath, pi.ResolvedInputs, values, inputNames, configValues)
 
-	handled, err := e.finalizeOutput(result, pi.RunPath, execErr)
+	handled, err := e.finalizeOutput(result, pi.RunPath, outputModes(fs, pi.RunPath), execErr)
 	if err != nil {
 		return err
 	}
@@ -500,16 +514,18 @@ func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values ma
 
 	var result *execResult
 	var execErr error
+	var fs *RPackFS
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				execErr = fmt.Errorf("lua execution panicked: %v", r)
 			}
 		}()
-		_, result, execErr = e.execCore(ctx, absDefDir, runDir, tempDir, resolvedInputs, values, inputNames, configValues)
+		fs, result, execErr = e.execCore(ctx, absDefDir, runDir, tempDir, resolvedInputs, values, inputNames, configValues)
 	}()
 
-	handled, err := e.finalizeOutput(result, runDir, execErr)
+	modes := outputModes(fs, runDir)
+	handled, err := e.finalizeOutput(result, runDir, modes, execErr)
 	if err != nil {
 		return err
 	}
@@ -518,7 +534,7 @@ func (e *Executor) ExecRPackDirect(ctx context.Context, defDir string, values ma
 	}
 
 	// No --output-dir and no --dry-run: write files to CWD.
-	if cpErr := copyDir(runDir, "."); cpErr != nil {
+	if cpErr := copyDir(runDir, ".", modes); cpErr != nil {
 		return fmt.Errorf("failed to copy files to working directory: %w", cpErr)
 	}
 
@@ -560,8 +576,8 @@ func resolveDirectInputs(inputs map[string]string) ([]*RPackResolvedInput, error
 
 // computeFilesToMove enumerates the target write handles of fs, mapping each
 // unique produced file to a ControlledFile paired with its on-disk sha256 and
-// its effective mode (ADR 0001: captured from the staged file, deterministic
-// because staged target writes are normalized). A handle written multiple
+// its declared executable intent (ADR 0002), independent of private staging
+// permissions or the caller's umask. A handle written multiple
 // times by the script is counted once; this is the input to the
 // lockfile-based relocation in ExecRPack's terminal path.
 func computeFilesToMove(fs *RPackFS, runDir string) (filesToMove []*ControlledFile, checksums, modes map[string]string, err error) {
@@ -579,12 +595,8 @@ func computeFilesToMove(fs *RPackFS, runDir string) (filesToMove []*ControlledFi
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to calculate checksum of: %s: %w", absPath, err)
 		}
-		info, err := os.Stat(absPath)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to stat: %s: %w", absPath, err)
-		}
 		checksums[absPath] = chsum
-		modes[absPath] = FormatMode(info.Mode())
+		modes[absPath] = CanonicalMode(handle.OutputMode())
 		filesToMove = append(filesToMove, &ControlledFile{
 			Path:    relPath,
 			AbsPath: absPath,
@@ -613,7 +625,7 @@ func (e *Executor) applyLockfileChanges(oldLock *RPackLockFile, execPath, lockFi
 	if err := e.guardAddedFiles(execPath, changes.Added); err != nil {
 		return err
 	}
-	if err := moveFiles(filesToMove, execPath); err != nil {
+	if err := moveFiles(filesToMove, execPath, modes); err != nil {
 		return err
 	}
 	if err := cleanupRemovedFiles(execPath, changes.Removed); err != nil {
@@ -694,16 +706,17 @@ func buildNewLockfile(filesToMove []*ControlledFile, checksums, modes map[string
 	return lockfile
 }
 
-// moveFiles relocates each produced file from its run-directory absolute path
-// into execPath at its relative target path, creating parent directories.
-func moveFiles(filesToMove []*ControlledFile, execPath string) error {
+// moveFiles materializes outputs in the destination directory before removing
+// their private staged copies. Renaming staging directly would bypass local
+// creation policy and leak the staging mode into the output.
+func moveFiles(filesToMove []*ControlledFile, execPath string, modes map[string]string) error {
 	for _, wFile := range filesToMove {
 		targetFile := filepath.Clean(filepath.Join(execPath, wFile.Path))
-		if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil { //nolint:gosec // standard permissions
-			return fmt.Errorf("failed to create dirs for: %s: %w", targetFile, err)
+		if err := copyOutputFile(wFile.AbsPath, targetFile, modes); err != nil {
+			return fmt.Errorf("failed to publish file %s to exec path %s: %w", wFile.Path, execPath, err)
 		}
-		if err := os.Rename(wFile.AbsPath, targetFile); err != nil {
-			return fmt.Errorf("failed to move file %s to exec path %s: %w", wFile.Path, execPath, err)
+		if err := os.Remove(wFile.AbsPath); err != nil {
+			return fmt.Errorf("failed to remove staged file %s: %w", wFile.Path, err)
 		}
 	}
 	return nil

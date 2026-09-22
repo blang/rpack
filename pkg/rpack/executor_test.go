@@ -406,6 +406,37 @@ func TestComputeFilesToMove_DedupesDuplicateWrites(t *testing.T) {
 	}
 }
 
+// TestComputeFilesToMove_RecordsDeclaredIntentNotStat pins ADR 0002: the
+// recorded mode is the handle's declared intent, never derived from the
+// staged file's physical bits (which are private staging detail an external
+// actor or the OS may alter).
+func TestComputeFilesToMove_RecordsDeclaredIntentNotStat(t *testing.T) {
+	runDir := t.TempDir()
+	defDir := t.TempDir()
+	fs := NewRPackFS(true, defDir, runDir, defDir, "", nil)
+
+	if err := fs.Write("./f.sh", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Chmod("./f.sh", ExecutableMode); err != nil {
+		t.Fatal(err)
+	}
+	// External actor rewrites the staged file's physical bits to a
+	// non-executable-looking mode. The declared intent must survive.
+	if err := os.Chmod(filepath.Join(runDir, "f.sh"), 0o666); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
+	}
+
+	_, _, modes, err := computeFilesToMove(fs, runDir)
+	if err != nil {
+		t.Fatalf("computeFilesToMove: %v", err)
+	}
+	absPath := filepath.Join(runDir, "f.sh")
+	if modes[absPath] != "755" {
+		t.Fatalf("recorded mode = %q, want 755 (declared intent, not stat)", modes[absPath])
+	}
+}
+
 func TestComputeFilesToMove_MissingFileOnDisk_ReturnsChecksumError(t *testing.T) {
 	// A target handle whose backing file was never written should surface a
 	// checksum error rather than silently producing an empty lockfile entry.
@@ -614,26 +645,67 @@ rpack.write("./deploy.sh", "#!/bin/sh\necho hi\n", {mode = "755"})
 rpack.write("./notes.txt", "plain")
 `
 
-// TestModeSurvival_FourPaths proves a declared mode survives every output
-// path (ADR 0001): rename (managed), --output-dir, dry-run+--output-dir,
-// and direct-to-CWD.
+// matrixScript exercises every permission declaration spelling (issue #15):
+// the executable boolean, both mode aliases, the default, an explicit
+// non-executable declaration, a reset-on-rewrite, and the chmod API.
+const matrixScript = `local rpack = require("rpack.v1")
+rpack.write("./exec_bool.sh", "#!/bin/sh\n", {executable = true})
+rpack.write("./exec_mode.sh", "#!/bin/sh\n", {mode = "755"})
+rpack.write("./exec_alias.sh", "#!/bin/sh\n", {mode = "0755"})
+rpack.write("./plain_alias.txt", "x", {mode = "0644"})
+rpack.write("./nonexec.sh", "#!/bin/sh\n", {executable = false})
+rpack.write("./default.txt", "x")
+rpack.write("./reset.sh", "#!/bin/sh\n", {executable = true})
+rpack.write("./reset.sh", "y")
+rpack.write("./chmoded.sh", "#!/bin/sh\n")
+rpack.chmod("./chmoded.sh", "755")
+`
+
+// matrixIntent maps each matrixScript output to its canonical intent.
+var matrixIntent = map[string]string{
+	"exec_bool.sh":    "755",
+	"exec_mode.sh":    "755",
+	"exec_alias.sh":   "755",
+	"chmoded.sh":      "755",
+	"plain_alias.txt": "644",
+	"nonexec.sh":      "644",
+	"default.txt":     "644",
+	"reset.sh":        "644",
+}
+
+// canonicalFileMode returns the canonical executable intent of path.
+func canonicalFileMode(t *testing.T, path string) string {
+	t.Helper()
+	return CanonicalMode(fileMode(t, path))
+}
+
+// TestModeSurvival_FourPaths proves declared intent survives every output
+// path (ADR 0002): managed rename (config+lock), --output-dir,
+// dry-run+--output-dir, and direct-to-CWD. Physical bits follow the local
+// creation policy, so assertions compare canonical intent.
+//
+//nolint:gocognit,gocyclo // test: independent output-path scenarios
 func TestModeSurvival_FourPaths(t *testing.T) {
 	defDir := writeDef(t, map[string]string{
 		"rpack.yaml": minimalDefYAML("modes"),
-		"script.lua": chmodScript,
+		"script.lua": matrixScript,
 	})
+
+	assertOutputs := func(t *testing.T, dir string) {
+		t.Helper()
+		for name, want := range matrixIntent {
+			if got := canonicalFileMode(t, filepath.Join(dir, name)); got != want {
+				t.Errorf("%s intent = %q, want %q", name, got, want)
+			}
+		}
+	}
 
 	t.Run("direct to CWD", func(t *testing.T) {
 		target := t.TempDir()
 		if err := runDirect(t, &Executor{}, defDir, nil, target); err != nil {
 			t.Fatalf("ExecRPackDirect: %v", err)
 		}
-		if got := fileMode(t, filepath.Join(target, "deploy.sh")); got != 0o755 {
-			t.Fatalf("deploy.sh mode = %o, want 755", got)
-		}
-		if got := fileMode(t, filepath.Join(target, "notes.txt")); got != 0o644 {
-			t.Fatalf("notes.txt mode = %o, want 644", got)
-		}
+		assertOutputs(t, target)
 	})
 
 	t.Run("output dir", func(t *testing.T) {
@@ -642,9 +714,7 @@ func TestModeSurvival_FourPaths(t *testing.T) {
 		if err := runDirect(t, &Executor{OutputDir: out}, defDir, nil, target); err != nil {
 			t.Fatalf("ExecRPackDirect: %v", err)
 		}
-		if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o755 {
-			t.Fatalf("deploy.sh mode = %o, want 755", got)
-		}
+		assertOutputs(t, out)
 	})
 
 	t.Run("dry run with output dir", func(t *testing.T) {
@@ -653,18 +723,83 @@ func TestModeSurvival_FourPaths(t *testing.T) {
 		if err := runDirect(t, &Executor{DryRun: true, OutputDir: out}, defDir, nil, target); err != nil {
 			t.Fatalf("ExecRPackDirect: %v", err)
 		}
-		if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o755 {
-			t.Fatalf("deploy.sh mode = %o, want 755", got)
-		}
+		assertOutputs(t, out)
 	})
 
 	t.Run("managed rename path", func(t *testing.T) {
-		_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+		_, useDir, cfg := setupExecRPackEnv(t, matrixScript)
 		if err := runExecRPack(t, false, cfg, useDir); err != nil {
 			t.Fatalf("ExecRPack: %v", err)
 		}
-		if got := fileMode(t, filepath.Join(useDir, "deploy.sh")); got != 0o755 {
-			t.Fatalf("deploy.sh mode = %o, want 755", got)
+		assertOutputs(t, useDir)
+		modes := lockfileModes(t, useDir)
+		for name, want := range matrixIntent {
+			if modes[name] != want {
+				t.Errorf("lockfile mode for %s = %q, want %q", name, modes[name], want)
+			}
+		}
+	})
+}
+
+// TestOutputReplacement_DoesNotInheritExistingMode pins ADR 0002's
+// replace-without-rw-preservation: publication recreates the destination
+// inode, so a pre-existing file's mode never leaks into the output, on both
+// the direct-CWD and managed paths.
+//
+//nolint:gocognit // test: independent direct and managed replacement scenarios
+func TestOutputReplacement_DoesNotInheritExistingMode(t *testing.T) {
+	t.Run("direct to CWD replaces existing file", func(t *testing.T) {
+		defDir := writeDef(t, map[string]string{
+			"rpack.yaml": minimalDefYAML("replace"),
+			"script.lua": chmodScript,
+		})
+		target := t.TempDir()
+		preExisting := filepath.Join(target, "deploy.sh")
+		preCreateStaged(t, preExisting, 0o777) // wide, owner-executable
+		if err := runDirect(t, &Executor{}, defDir, nil, target); err != nil {
+			t.Fatalf("ExecRPackDirect: %v", err)
+		}
+		if got := canonicalFileMode(t, preExisting); got != "755" {
+			t.Fatalf("deploy.sh intent = %q, want 755", got)
+		}
+		// Replacement of a non-executable pre-existing file lands executable.
+		plain := filepath.Join(target, "notes.txt")
+		preCreateStaged(t, plain, 0o600)
+		if err := runDirect(t, &Executor{}, defDir, nil, target); err != nil {
+			t.Fatalf("ExecRPackDirect rerun: %v", err)
+		}
+		if got := canonicalFileMode(t, plain); got != "644" {
+			t.Fatalf("notes.txt intent = %q, want 644 (no inode inheritance)", got)
+		}
+		if got := canonicalFileMode(t, preExisting); got != "755" {
+			t.Fatalf("deploy.sh intent after rerun = %q, want 755", got)
+		}
+	})
+
+	t.Run("managed path replaces existing file", func(t *testing.T) {
+		_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+		// deploy.sh exists on disk but is unmanaged: refused without force.
+		preCreateStaged(t, filepath.Join(useDir, "deploy.sh"), 0o600)
+		if err := runExecRPack(t, false, cfg, useDir); err == nil ||
+			!strings.Contains(err.Error(), "use force flag to ignore") {
+			t.Fatalf("expected unmanaged-file refusal, got %v", err)
+		}
+		if err := runExecRPack(t, true, cfg, useDir); err != nil {
+			t.Fatalf("force run over unmanaged file: %v", err)
+		}
+		if got := canonicalFileMode(t, filepath.Join(useDir, "deploy.sh")); got != "755" {
+			t.Fatalf("deploy.sh intent = %q, want 755 (no inode inheritance)", got)
+		}
+		// Second (managed) run replaces and keeps declared intent; only the
+		// read/write bits changed, which is not drift.
+		if err := os.Chmod(filepath.Join(useDir, "deploy.sh"), 0o700); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		if err := runExecRPack(t, false, cfg, useDir); err != nil {
+			t.Fatalf("managed rerun: %v", err)
+		}
+		if got := canonicalFileMode(t, filepath.Join(useDir, "deploy.sh")); got != "755" {
+			t.Fatalf("deploy.sh intent after managed rerun = %q, want 755", got)
 		}
 	})
 }
@@ -684,8 +819,8 @@ func TestCopyDir_ResetsStaleModeOnOverwrite(t *testing.T) {
 	if err := runDirect(t, &Executor{OutputDir: out}, defDir, nil, target); err != nil {
 		t.Fatalf("run1: %v", err)
 	}
-	if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o755 {
-		t.Fatalf("run1 deploy.sh mode = %o, want 755", got)
+	if got := canonicalFileMode(t, filepath.Join(out, "deploy.sh")); got != "755" {
+		t.Fatalf("run1 deploy.sh intent = %q, want 755", got)
 	}
 
 	// Script no longer declares the mode.
@@ -696,8 +831,8 @@ func TestCopyDir_ResetsStaleModeOnOverwrite(t *testing.T) {
 	if err := runDirect(t, &Executor{OutputDir: out, Force: true}, defDir, nil, target); err != nil {
 		t.Fatalf("run2: %v", err)
 	}
-	if got := fileMode(t, filepath.Join(out, "deploy.sh")); got != 0o644 {
-		t.Fatalf("run2 deploy.sh mode = %o, want 644 (stale 755 must not leak)", got)
+	if got := canonicalFileMode(t, filepath.Join(out, "deploy.sh")); got != "644" {
+		t.Fatalf("run2 deploy.sh intent = %q, want 644 (stale 755 must not leak)", got)
 	}
 }
 
@@ -740,7 +875,8 @@ func TestLockfile_ModeDriftRefusedThenForceHeals(t *testing.T) {
 		t.Fatalf("run1: %v", err)
 	}
 
-	// Out-of-band chmod, content untouched.
+	// Out-of-band chmod, content untouched: R/W drift within the same
+	// executable intent is not drift (ADR 0002); flip owner-exec to trip it.
 	if err := os.Chmod(filepath.Join(useDir, "deploy.sh"), 0o644); err != nil { //nolint:gosec // test fixture
 		t.Fatal(err)
 	}
@@ -749,21 +885,22 @@ func TestLockfile_ModeDriftRefusedThenForceHeals(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "permissions were changed outside of rpack") {
 		t.Fatalf("expected mode-drift refusal, got %v", err)
 	}
-	// The message carries want/got pairs.
-	if !strings.Contains(err.Error(), "deploy.sh (recorded 755, on disk 644)") {
-		t.Fatalf("expected want/got pair in message, got %v", err)
+	// The message describes executable intent, never literal rwx bits.
+	if !strings.Contains(err.Error(), "deploy.sh (expected executable (755), found non-executable (644))") {
+		t.Fatalf("expected executable-intent diagnostic, got %v", err)
 	}
 
 	if err := runExecRPack(t, true, cfg, useDir); err != nil {
 		t.Fatalf("force run: %v", err)
 	}
-	if got := fileMode(t, filepath.Join(useDir, "deploy.sh")); got != 0o755 {
-		t.Fatalf("after force heal mode = %o, want 755", got)
+	if got := canonicalFileMode(t, filepath.Join(useDir, "deploy.sh")); got != "755" {
+		t.Fatalf("after force heal intent = %q, want 755", got)
 	}
 }
 
 // TestChecker_ModeDrift covers G's enforcement on `rpack check`
-// (checker.go call site).
+// (checker.go call site). The diagnostic describes executable intent;
+// 0600 on disk is non-executable, i.e. canonical 644.
 func TestChecker_ModeDrift(t *testing.T) {
 	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
 	if err := runExecRPack(t, false, cfg, useDir); err != nil {
@@ -777,8 +914,49 @@ func TestChecker_ModeDrift(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "permissions were changed outside of rpack") {
 		t.Fatalf("expected checker mode-drift error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "deploy.sh (recorded 755, on disk 600)") {
-		t.Fatalf("expected want/got pair, got %v", err)
+	if !strings.Contains(err.Error(), "deploy.sh (expected executable (755), found non-executable (644))") {
+		t.Fatalf("expected executable-intent diagnostic, got %v", err)
+	}
+}
+
+// TestExecRPack_ForceDoesNotBypassLegacyModeRecord pins the migration gate
+// (issue #15): a legacy non-canonical lockfile mode record ("600")
+// hard-errors every run — including --force — with the migration hint;
+// --force can never silently rewrite a recorded permission guarantee.
+func TestExecRPack_ForceDoesNotBypassLegacyModeRecord(t *testing.T) {
+	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+
+	// Simulate a pre-canonicalization lockfile: same content, recorded 600.
+	modes := lockfileModes(t, useDir)
+	if modes["deploy.sh"] != "755" {
+		t.Fatalf("run1 recorded deploy.sh mode = %q, want 755", modes["deploy.sh"])
+	}
+	lockPath := filepath.Join(useDir, "app.rpack.lock.yaml")
+	before, err := os.ReadFile(lockPath) //nolint:gosec // test
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(string(before), "mode: \"755\"", "mode: \"600\"", 1)
+	if legacy == string(before) {
+		t.Fatalf("could not inject legacy mode into lockfile:\n%s", before)
+	}
+	writeFile(t, lockPath, legacy)
+
+	// --force must NOT bypass the legacy-mode gate.
+	forceErr := runExecRPack(t, true, cfg, useDir)
+	if forceErr == nil || !strings.Contains(forceErr.Error(), "requires migration") {
+		t.Fatalf("expected legacy-mode migration error even with force, got %v", forceErr)
+	}
+	// The refused run must not have rewritten the lockfile.
+	after, readErr := os.ReadFile(lockPath) //nolint:gosec // test
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != legacy {
+		t.Fatalf("lockfile rewritten by refused force run:\nbefore:\n%s\nafter:\n%s", legacy, after)
 	}
 }
 

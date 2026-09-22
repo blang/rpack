@@ -291,6 +291,21 @@ grep -q 'go-version: 1.22.3' "$OUTDIR/file.yml"    # ✓ matches
 
 Always check the template source to construct accurate grep patterns.
 
+### Executable Intent
+
+```bash
+# Executable output — check the execute bit, never exact rwx modes
+test -x "$OUTDIR/deploy.sh" \
+  || { echo "FAIL: deploy.sh not executable"; exit 1; }
+
+# Non-executable output
+if test -x "$OUTDIR/config.sh"; then
+  echo "FAIL: config.sh should not be executable"; exit 1
+fi
+```
+
+Never assert exact permission modes (e.g., `stat -c %a`): read/write bits depend on the local umask. Only the executable bit is part of the rpack contract.
+
 ### JSON Queries
 
 ```bash
@@ -346,6 +361,7 @@ jq -e '.success == false' "$OUTDIR/meta.json" \
 6. **Input file processing** — If the script reads input files, test with valid and malformed inputs
 7. **Multiple patterns combined** — If the script mixes copy/template/merge, verify each pattern produces correct output
 8. **Directory creation** — Verify nested directories like `.github/workflows/` are created automatically
+9. **Executable output** — If the script declares `{ executable = true }` or `mode = "755"`, verify with `test -x` (never assert exact rwx modes)
 
 ## Anti-Patterns
 

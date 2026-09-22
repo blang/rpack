@@ -26,58 +26,89 @@ func newTestRPackFS(t *testing.T) (fs *RPackFS, runDir, tempDir string) {
 	return NewRPackFS(true, defDir, runDir, tempDir, "", nil), runDir, tempDir
 }
 
-// TestFileBackedFSHandleWrite_NormalizesTargetMode pins the ADR 0001
-// normalization rule: a staged target write always lands at exactly 0644,
-// never umask-dependent, never inherited from a pre-existing staged file.
-func TestFileBackedFSHandleWrite_NormalizesTargetMode(t *testing.T) {
-	runDir := t.TempDir()
-	h := NewFileBackedFSHandle(filepath.Join(runDir, "out.txt"), "out.txt", TargetResolver, "out.txt")
+// resolvedIntent resolves a friendly path on fs and returns the handle's
+// declared canonical intent ("644"/"755").
+func resolvedIntent(t *testing.T, fs *RPackFS, name string) string {
+	t.Helper()
+	h, err := fs.resolve(name)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", name, err)
+	}
+	return CanonicalMode(h.OutputMode())
+}
 
-	// Pre-create the staged file with a non-default mode: os.WriteFile would
-	// keep it (perm is creation-only), the normalization chmod must not.
-	if err := os.WriteFile(h.absPath, []byte("old"), 0o600); err != nil { //nolint:gosec // test fixture
+// preCreateStaged writes a staged file with an exact mode (chmod after write
+// so the process umask cannot narrow it) to prove mode isolation.
+func preCreateStaged(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil { //nolint:gosec // test fixture
 		t.Fatal(err)
 	}
-	if err := h.Write([]byte("new")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if got := stagedMode(t, h.absPath); got != 0o644 {
-		t.Fatalf("mode after overwrite = %o, want 644 (reset-on-write)", got)
+	if err := os.Chmod(path, mode); err != nil { //nolint:gosec // test fixture
+		t.Fatal(err)
 	}
 }
 
-// TestFileBackedFSHandleWrite_TempNotNormalized pins the temp exclusion:
-// temp files keep umask-provided modes (0600 here), they are never staged
-// target outputs (ADR 0001).
-func TestFileBackedFSHandleWrite_TempNotNormalized(t *testing.T) {
-	tempDir := t.TempDir()
-	h := NewFileBackedFSHandle(filepath.Join(tempDir, "scratch.txt"), "temp:scratch.txt", TempResolver, "")
-	if err := os.WriteFile(h.absPath, []byte("old"), 0o600); err != nil { //nolint:gosec // test fixture
-		t.Fatal(err)
-	}
+// TestFileBackedFSHandleWrite_StagesPrivateInode pins the ADR 0002 staging
+// rule: a staged target write always recreates a private 0600 inode, never
+// inheriting a pre-existing staged file's mode and never exposing the final
+// intent in staging.
+func TestFileBackedFSHandleWrite_StagesPrivateInode(t *testing.T) {
+	runDir := t.TempDir()
+	h := NewFileBackedFSHandle(filepath.Join(runDir, "out.txt"), "out.txt", TargetResolver, "out.txt")
+
+	// Pre-create the staged file with a wide mode: os.WriteFile would keep it
+	// (perm is creation-only); the recreate-on-write must not.
+	preCreateStaged(t, h.absPath, 0o777)
 	if err := h.Write([]byte("new")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if got := stagedMode(t, h.absPath); got != 0o600 {
-		t.Fatalf("temp mode after overwrite = %o, want 600 (temp not normalized)", got)
+		t.Fatalf("staged mode after write = %o, want 600 (private staging)", got)
+	}
+	if got := CanonicalMode(h.OutputMode()); got != "644" {
+		t.Fatalf("intent after write = %q, want 644 (reset-on-write)", got)
 	}
 }
 
-// TestBaseFSChmod covers the BaseFS.Chmod contract (ADR 0001): happy path,
-// recorded-as-Write, missing file, directory refusal, resolver refusals.
+// TestFileBackedFSHandleWrite_TempAlsoPrivate pins that temp staging follows
+// the same private-inode policy: temp files are never staged outputs, and a
+// pre-existing temp file's mode never leaks.
+func TestFileBackedFSHandleWrite_TempAlsoPrivate(t *testing.T) {
+	tempDir := t.TempDir()
+	h := NewFileBackedFSHandle(filepath.Join(tempDir, "scratch.txt"), "temp:scratch.txt", TempResolver, "")
+	preCreateStaged(t, h.absPath, 0o777)
+	if err := h.Write([]byte("new")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := stagedMode(t, h.absPath); got != 0o600 {
+		t.Fatalf("temp staged mode after write = %o, want 600 (private staging)", got)
+	}
+}
+
+// TestBaseFSChmod covers the BaseFS.Chmod contract (ADR 0002): metadata-only
+// intent declaration, recorded-as-Write, canonical-mode validation, and
+// resolver refusals. Physical staging permissions never change.
 //
 //nolint:gocognit,gocyclo // test: table of independent subtest scenarios
 func TestBaseFSChmod(t *testing.T) {
-	t.Run("chmod target file succeeds and is recorded as write", func(t *testing.T) {
+	t.Run("chmod records intent without physical chmod", func(t *testing.T) {
 		fs, runDir, _ := newTestRPackFS(t)
 		if err := fs.Write("./deploy.sh", []byte("#!/bin/sh\n")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./deploy.sh", 0o755); err != nil {
+		if got := stagedMode(t, filepath.Join(runDir, "deploy.sh")); got != 0o600 {
+			t.Fatalf("staged mode after write = %o, want 600", got)
+		}
+		if err := fs.Chmod("./deploy.sh", ExecutableMode); err != nil {
 			t.Fatalf("Chmod: %v", err)
 		}
-		if got := stagedMode(t, filepath.Join(runDir, "deploy.sh")); got != 0o755 {
-			t.Fatalf("staged mode = %o, want 755", got)
+		// Chmod is metadata-only: staging stays private at 0600.
+		if got := stagedMode(t, filepath.Join(runDir, "deploy.sh")); got != 0o600 {
+			t.Fatalf("staged mode after chmod = %o, want 600 (no physical chmod)", got)
+		}
+		if got := resolvedIntent(t, fs, "./deploy.sh"); got != "755" {
+			t.Fatalf("declared intent after chmod = %q, want 755", got)
 		}
 		// The chmod must surface as a target Write record (relocation input).
 		found := false
@@ -93,7 +124,7 @@ func TestBaseFSChmod(t *testing.T) {
 
 	t.Run("missing file errors with write-it-first", func(t *testing.T) {
 		fs, _, _ := newTestRPackFS(t)
-		err := fs.Chmod("./missing.sh", 0o755)
+		err := fs.Chmod("./missing.sh", ExecutableMode)
 		if err == nil || !strings.Contains(err.Error(), "does not exist (write it first)") {
 			t.Fatalf("want write-it-first error, got %v", err)
 		}
@@ -109,7 +140,7 @@ func TestBaseFSChmod(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(runDir, "adir"), 0o750); err != nil { //nolint:gosec // test fixture
 			t.Fatal(err)
 		}
-		err := fs.Chmod("./adir", 0o755)
+		err := fs.Chmod("./adir", ExecutableMode)
 		if err == nil || !strings.Contains(err.Error(), "directories is not supported") {
 			t.Fatalf("want directory refusal, got %v", err)
 		}
@@ -119,7 +150,7 @@ func TestBaseFSChmod(t *testing.T) {
 		fs, _, _ := newTestRPackFS(t)
 		// Writability runs before existence: a missing rpack: path must get
 		// the access refusal, never the misleading "write it first".
-		err := fs.Chmod("rpack:missing.sh", 0o755)
+		err := fs.Chmod("rpack:missing.sh", ExecutableMode)
 		if err == nil || !strings.Contains(err.Error(), "not allowed to write") {
 			t.Fatalf("want access refusal, got %v", err)
 		}
@@ -131,22 +162,58 @@ func TestBaseFSChmod(t *testing.T) {
 	t.Run("map resolver refused", func(t *testing.T) {
 		resolved := []*RPackResolvedInput{{Name: "data", UserPath: "data", ResolvedPath: "data", Type: RPackInputTypeFile}}
 		fs := NewRPackFS(true, t.TempDir(), t.TempDir(), t.TempDir(), "", resolved)
-		err := fs.Chmod("map:data", 0o755)
+		err := fs.Chmod("map:data", ExecutableMode)
 		if err == nil || !strings.Contains(err.Error(), "not allowed to write") {
 			t.Fatalf("want access refusal, got %v", err)
 		}
 	})
 
-	t.Run("temp chmod allowed", func(t *testing.T) {
+	t.Run("unsupported exact modes refused with zero residue", func(t *testing.T) {
+		fs, runDir, _ := newTestRPackFS(t)
+		if err := fs.Write("./f.sh", []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Chmod("./f.sh", ExecutableMode); err != nil {
+			t.Fatal(err)
+		}
+		// The pre-issue-15 exact modes are refused by the Go API too.
+		for _, mode := range []os.FileMode{0o600, 0o700, 0o777} {
+			err := fs.Chmod("./f.sh", mode)
+			if err == nil || !strings.Contains(err.Error(), "unsupported output mode") {
+				t.Fatalf("mode %o: want unsupported-output-mode refusal, got %v", mode, err)
+			}
+		}
+		// Refusals are metadata-only: staging, intent, and records unchanged.
+		if got := stagedMode(t, filepath.Join(runDir, "f.sh")); got != 0o600 {
+			t.Fatalf("staged mode after refusals = %o, want 600", got)
+		}
+		if got := resolvedIntent(t, fs, "./f.sh"); got != "755" {
+			t.Fatalf("intent after refusals = %q, want 755 (last success wins)", got)
+		}
+		writes := 0
+		for _, h := range fs.TargetWriteHandles() {
+			if h.IndirectTargetPath() == "f.sh" {
+				writes++
+			}
+		}
+		if writes != 2 { // one write + one successful chmod; refusals add none
+			t.Fatalf("target write records for f.sh = %d, want 2 (zero residue)", writes)
+		}
+	})
+
+	t.Run("temp chmod allowed, metadata only", func(t *testing.T) {
 		fs, _, tempDir := newTestRPackFS(t)
 		if err := fs.Write("temp:scratch.sh", []byte("x")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("temp:scratch.sh", 0o700); err != nil {
+		if err := fs.Chmod("temp:scratch.sh", ExecutableMode); err != nil {
 			t.Fatalf("temp Chmod: %v", err)
 		}
-		if got := stagedMode(t, filepath.Join(tempDir, "scratch.sh")); got != 0o700 {
-			t.Fatalf("temp mode = %o, want 700", got)
+		if got := stagedMode(t, filepath.Join(tempDir, "scratch.sh")); got != 0o600 {
+			t.Fatalf("temp staged mode after chmod = %o, want 600 (no physical chmod)", got)
+		}
+		if got := resolvedIntent(t, fs, "temp:scratch.sh"); got != "755" {
+			t.Fatalf("temp intent after chmod = %q, want 755", got)
 		}
 		// Temp chmods are purity-invisible and never relocated.
 		if len(fs.TargetWriteHandles()) != 0 {
@@ -154,35 +221,79 @@ func TestBaseFSChmod(t *testing.T) {
 		}
 	})
 
-	t.Run("last chmod wins", func(t *testing.T) {
-		fs, runDir, _ := newTestRPackFS(t)
-		if err := fs.Write("./f.sh", []byte("x")); err != nil {
+	t.Run("friendly spellings share one intent", func(t *testing.T) {
+		fs, _, _ := newTestRPackFS(t)
+		if err := fs.Write("deploy.sh", []byte("x")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./f.sh", 0o700); err != nil {
+		if err := fs.Chmod("./deploy.sh", ExecutableMode); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./f.sh", 0o755); err != nil {
+		// "deploy.sh" and "./deploy.sh" resolve to the same stable handle, so
+		// intent declared through one spelling is visible through the other.
+		if got := resolvedIntent(t, fs, "deploy.sh"); got != "755" {
+			t.Fatalf("intent via bare spelling = %q, want 755 (shared handle)", got)
+		}
+		// A rewrite through either spelling resets the shared intent.
+		if err := fs.Write("./deploy.sh", []byte("y")); err != nil {
 			t.Fatal(err)
 		}
-		if got := stagedMode(t, filepath.Join(runDir, "f.sh")); got != 0o755 {
-			t.Fatalf("mode = %o, want 755 (last wins)", got)
+		if got := resolvedIntent(t, fs, "deploy.sh"); got != "644" {
+			t.Fatalf("intent after rewrite via ./-spelling = %q, want 644 (shared reset)", got)
 		}
 	})
 
-	t.Run("write after chmod resets to 644", func(t *testing.T) {
-		fs, runDir, _ := newTestRPackFS(t)
+	t.Run("last declared intent wins", func(t *testing.T) {
+		fs, _, _ := newTestRPackFS(t)
 		if err := fs.Write("./f.sh", []byte("x")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./f.sh", 0o755); err != nil {
+		if err := fs.Chmod("./f.sh", NonExecutableMode); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Chmod("./f.sh", ExecutableMode); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolvedIntent(t, fs, "./f.sh"); got != "755" {
+			t.Fatalf("intent = %q, want 755 (last wins)", got)
+		}
+	})
+
+	t.Run("write after chmod resets to non-executable", func(t *testing.T) {
+		fs, _, _ := newTestRPackFS(t)
+		if err := fs.Write("./f.sh", []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Chmod("./f.sh", ExecutableMode); err != nil {
 			t.Fatal(err)
 		}
 		if err := fs.Write("./f.sh", []byte("y")); err != nil {
 			t.Fatal(err)
 		}
-		if got := stagedMode(t, filepath.Join(runDir, "f.sh")); got != 0o644 {
-			t.Fatalf("mode = %o, want 644 (reset-on-write)", got)
+		if got := resolvedIntent(t, fs, "./f.sh"); got != "644" {
+			t.Fatalf("intent after rewrite = %q, want 644 (reset-on-write)", got)
+		}
+	})
+
+	t.Run("temp intent never propagates through a copy", func(t *testing.T) {
+		fs, _, _ := newTestRPackFS(t)
+		if err := fs.Write("temp:src.sh", []byte("#!/bin/sh\n")); err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Chmod("temp:src.sh", ExecutableMode); err != nil {
+			t.Fatal(err)
+		}
+		// A copy is read+write: the target write establishes its own default
+		// intent; the temp file's declaration is never inherited.
+		b, err := fs.Read("temp:src.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.Write("./copied.sh", b); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolvedIntent(t, fs, "./copied.sh"); got != "644" {
+			t.Fatalf("copied intent = %q, want 644 (temp intent never propagates)", got)
 		}
 	})
 }
@@ -208,7 +319,7 @@ func TestBaseFSChmod_PurityConflict(t *testing.T) {
 		if err := fs.Write("./data", []byte("x")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./data", 0o755); err != nil {
+		if err := fs.Chmod("./data", ExecutableMode); err != nil {
 			t.Fatal(err)
 		}
 		if err := fs.Check(); err == nil {
@@ -221,7 +332,7 @@ func TestBaseFSChmod_PurityConflict(t *testing.T) {
 		if err := fs.Write("./data", []byte("x")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./data", 0o755); err != nil {
+		if err := fs.Chmod("./data", ExecutableMode); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := fs.Read("map:data"); err != nil {
@@ -233,33 +344,46 @@ func TestBaseFSChmod_PurityConflict(t *testing.T) {
 	})
 }
 
-// TestInMemoryFSChmod pins the test-double contract: mode tracked per entry,
-// write resets, missing/directory errors mirror BaseFS.Chmod's messages.
+// TestInMemoryFSChmod pins the test-double contract: canonical mode tracked
+// per entry, write resets, missing/directory/unsupported-mode errors mirror
+// BaseFS.Chmod's behavior.
+//
+//nolint:gocyclo // test: linear scenario sequence
 func TestInMemoryFSChmod(t *testing.T) {
 	fs := NewInMemoryFS()
 	if err := fs.Write("f.sh", []byte("x")); err != nil {
 		t.Fatal(err)
 	}
-	if fs.Tree["f.sh"].Mode != 0o644 {
+	if fs.Tree["f.sh"].Mode != NonExecutableMode {
 		t.Fatalf("mode after write = %o, want 644", fs.Tree["f.sh"].Mode)
 	}
-	if err := fs.Chmod("f.sh", 0o755); err != nil {
+	if err := fs.Chmod("f.sh", ExecutableMode); err != nil {
 		t.Fatal(err)
 	}
-	if fs.Tree["f.sh"].Mode != 0o755 {
+	if fs.Tree["f.sh"].Mode != ExecutableMode {
 		t.Fatalf("mode after chmod = %o, want 755", fs.Tree["f.sh"].Mode)
+	}
+	// Unsupported exact modes are refused like on the real FS.
+	if err := fs.Chmod("f.sh", 0o600); err == nil || !strings.Contains(err.Error(), "unsupported output mode") {
+		t.Fatalf("want unsupported-output-mode refusal, got %v", err)
+	}
+	if err := fs.Chmod("f.sh", 0o700); err == nil || !strings.Contains(err.Error(), "unsupported output mode") {
+		t.Fatalf("want unsupported-output-mode refusal, got %v", err)
+	}
+	if fs.Tree["f.sh"].Mode != ExecutableMode {
+		t.Fatalf("mode after refusals = %o, want 755 (refusal is metadata-only)", fs.Tree["f.sh"].Mode)
 	}
 	if err := fs.Write("f.sh", []byte("y")); err != nil {
 		t.Fatal(err)
 	}
-	if fs.Tree["f.sh"].Mode != 0o644 {
+	if fs.Tree["f.sh"].Mode != NonExecutableMode {
 		t.Fatalf("mode after rewrite = %o, want 644 (reset-on-write)", fs.Tree["f.sh"].Mode)
 	}
-	if err := fs.Chmod("gone.sh", 0o755); err == nil || !strings.Contains(err.Error(), "does not exist") {
+	if err := fs.Chmod("gone.sh", ExecutableMode); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("missing: want does-not-exist, got %v", err)
 	}
 	fs.Mkdir("adir")
-	if err := fs.Chmod("adir", 0o755); err == nil || !strings.Contains(err.Error(), "directories") {
+	if err := fs.Chmod("adir", ExecutableMode); err == nil || !strings.Contains(err.Error(), "directories") {
 		t.Fatalf("dir: want refusal, got %v", err)
 	}
 }

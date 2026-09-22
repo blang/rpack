@@ -71,9 +71,9 @@ local output = rpack.template(rpack.read("rpack:files/users.md.tmpl"), {
 })
 rpack.write("./rpack_users.md", output)
 
--- Ship an executable script: declare its mode explicitly.
--- (Equivalent: rpack.write(...) followed by rpack.chmod("./deploy.sh", "755"))
-rpack.write("./deploy.sh", "#!/bin/sh\necho deploying\n", { mode = "755" })
+-- Ship an executable script: declare its executable intent explicitly.
+-- (Compatibility alias: rpack.write(..., { mode = "755" }) — same intent)
+rpack.write("./deploy.sh", "#!/bin/sh\necho deploying\n", { executable = true })
 ```
 
 **`schema.cue`** (optional) — validates the user's values:
@@ -167,17 +167,19 @@ Writes to `rpack:` or `map:` are blocked. Reads from the target directory are bl
 
 ### Purity
 
-Scripts are pure: same inputs always produce same outputs. The executor detects read-after-write conflicts and fails if a script reads a file it previously wrote. This guarantees idempotent execution.
+Scripts are pure: same inputs always produce the same output bytes and the same executable intent. The executor detects read-after-write conflicts and fails if a script reads a file it previously wrote. This guarantees idempotent execution. Materialized read/write permission bits are local policy (umask), not part of the reproducible output.
 
 ### Output file permissions
 
-Output files are created with mode `644` by default (umask-independent). Scripts set permissions explicitly, either with the `mode` option on `write`/`copy` or with `rpack.chmod(path, mode)` after the last write to a path — a write always resets the mode to `644`. Modes are octal strings (`"755"`, `"600"`); special bits are not supported.
+rpack manages each output file's **executable intent**, not its exact permission mode. `rpack.write`/`rpack.copy` accept `{ executable = true }` (default `false`); `rpack.chmod(path, mode)` declares intent after the last write to a path — a write always resets the intent to non-executable. For compatibility, `mode`/`chmod` accept only `"644"`/`"755"` (leading zeros allowed) as aliases for non-executable/executable intent; exact modes like `"600"` are rejected — manage private or deployment permissions outside rpack.
 
-Note: git only preserves the executable bit, so modes other than `644`/`755` report drift after a fresh clone until `rpack run --force` re-converges.
+Files are created like git checkouts: base `0666`/`0777` restricted by the OS umask, so the same rpack produces `0644`/`0755` under umask `022` and `0600`/`0700` under umask `077`. Replaced files are recreated — rpack does not preserve or promise local read/write bits on replacement. If local policy would strip owner-read or the declared owner-execute bit, the affected file is never published; the run refuses (under masks that deny directory search, e.g. `0100`, the failure may surface earlier during staging — the guarantee is no publication, not a specific error message). Only the owner-execute bit is tracked; ownership, ACLs, and special bits are not managed, and directories are not tracked.
+
+Git records the executable bit too: read/write differences introduced by clones or checkouts under ordinary umasks such as `022`, `002`, and `077` no longer cause permission conflicts. Adding or losing owner-execute remains detectable.
 
 ### Lockfiles
 
-After execution, rpack writes a lockfile tracking all output files with SHA256 checksums and permission modes. On subsequent runs, rpack verifies that managed files haven't been modified externally — content changes and permission changes are both detected. Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
+After execution, rpack writes a lockfile tracking all output files with SHA256 checksums and executable intent (recorded as canonical mode strings `"644"`/`"755"`). On subsequent runs, rpack verifies that managed files haven't been modified externally — content changes and executable-state changes are both detected (read/write bit differences are not). Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
 
 ## Configuration
 
@@ -208,8 +210,9 @@ The `rpack.v1` module is the scripting interface:
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `read` | `read(path) → string` | Read file contents. Path uses sandbox prefixes. |
-| `write` | `write(path, content)` | Write string to target file. |
-| `copy` | `copy(src, dst)` | Copy file. Both paths use sandbox prefixes. |
+| `write` | `write(path, content, opts?)` | Write string to target file. `opts.executable` (default `false`) or compatibility alias `opts.mode` (`"644"`/`"755"`, leading zeros allowed). |
+| `copy` | `copy(src, dst, opts?)` | Copy file. Both paths use sandbox prefixes. Same options as `write`. |
+| `chmod` | `chmod(path, mode)` | Declare executable intent for an already-written file. Compatibility alias: `"644"` (non-executable) or `"755"` (executable). |
 | `read_dir` | `read_dir(path, recursive?) → files, dirs` | List directory contents. Returns two tables. |
 
 ### Data parsing
@@ -334,6 +337,17 @@ Verify lockfile integrity — checks that all managed files exist and haven't be
 
 | Flag | Short | Description |
 |------|-------|-------------|
+| `--working-dir` | `-w` | Override working directory |
+
+### `rpack migrate-modes --acknowledge-permission-change <config>`
+
+Migrate a lockfile recorded under the earlier exact-mode contract to executable-intent metadata ([issue #15](https://github.com/blang/rpack/issues/15)). Rewrites non-canonical legacy `mode` strings in the lockfile using the recorded owner-execute bit (`"600"` → `"644"`, `"700"` → `"755"`); canonical `"644"`/`"755"` entries are reinterpreted automatically and need no migration. Validates all recorded content, executable state, and file existence first, and aborts without rewriting on any conflict. Never changes file permissions or target files; entries without a recorded mode stay unknown until the next `rpack run`.
+
+There is no `--force` option: acknowledgment only relinquishes exact read/write permission tracking. Definitions still requesting exact modes must be updated separately. Older binaries still compare full permissions, so coordinate upgrades rather than mixing permission models.
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--acknowledge-permission-change` | | Required: confirms the permission-semantics change ([issue #15](https://github.com/blang/rpack/issues/15)) |
 | `--working-dir` | `-w` | Override working directory |
 
 ### `rpack test --def <dir> [--filter <name>] [--init <name>] [--strict]`

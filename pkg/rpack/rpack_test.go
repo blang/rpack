@@ -401,46 +401,69 @@ func TestRPackLockFileCheckIntegrity_Modes(t *testing.T) {
 
 // --- Legacy mode records (issue #15) ----------------------------------------
 
-//nolint:gocognit,gocyclo // test: table of independent subtest scenarios
+//nolint:gocognit // test: table of independent compatibility scenarios
 func TestRPackLockFileCheckIntegrity_LegacyModes(t *testing.T) {
-	setup := func(t *testing.T, name string) (dir, sha string) {
+	setup := func(t *testing.T, name string, mode os.FileMode) (dir, sha string) {
 		t.Helper()
 		dir = t.TempDir()
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil { //nolint:gosec // test fixture
 			t.Fatal(err)
 		}
+		if err := os.Chmod(p, mode); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
 		return dir, calculateSHA256(t, p)
 	}
 
-	// Legacy (pre-canonicalization) recorded modes must hard-error with a
-	// migration hint: not silently skipped, not silently rewritten, and not
-	// force-bypassable drift.
-	t.Run("legacy mode blocks with migration hint", func(t *testing.T) {
-		for _, mode := range []string{"600", "750", "0755", "664"} {
-			t.Run("recorded "+mode, func(t *testing.T) {
-				dir, sha := setup(t, "legacy.conf")
+	// Legacy records are classified by owner-execute just like canonical
+	// records. Read/write and group/other execute differences are local policy.
+	t.Run("legacy modes compare by executable intent", func(t *testing.T) {
+		cases := []struct {
+			recorded string
+			onDisk   os.FileMode
+		}{
+			{"600", 0o664},
+			{"640", 0o600},
+			{"664", 0o644},
+			{"700", 0o775},
+			{"750", 0o700},
+			{"0755", 0o751},
+		}
+		for _, tc := range cases {
+			t.Run("recorded "+tc.recorded, func(t *testing.T) {
+				dir, sha := setup(t, "legacy.conf", tc.onDisk)
 				lf := NewRPackLockFile()
-				lf.AddFile("legacy.conf", sha, mode)
+				lf.AddFile("legacy.conf", sha, tc.recorded)
 				integrity, err := lf.CheckIntegrity(dir)
-				if err == nil {
-					t.Fatalf("legacy mode %q must hard-error, got integrity %+v", mode, integrity)
+				if err != nil {
+					t.Fatalf("legacy mode %q must remain compatible: %v", tc.recorded, err)
 				}
-				if !strings.Contains(err.Error(), "requires migration") ||
-					!strings.Contains(err.Error(), "migrate-modes") {
-					t.Errorf("error must be an actionable migration hint, got: %v", err)
-				}
-				if !strings.Contains(err.Error(), mode) {
-					t.Errorf("error must name the legacy mode %q, got: %v", mode, err)
+				if len(integrity.ModeModified) != 0 {
+					t.Errorf("legacy mode %q reported drift for %o: %v", tc.recorded, tc.onDisk, integrity.ModeModified)
 				}
 			})
 		}
 	})
 
+	t.Run("legacy mode still detects executable drift", func(t *testing.T) {
+		dir, sha := setup(t, "legacy.conf", 0o600)
+		lf := NewRPackLockFile()
+		lf.AddFile("legacy.conf", sha, "750")
+		integrity, err := lf.CheckIntegrity(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "legacy.conf (expected executable (755), found non-executable (644))"
+		if len(integrity.ModeModified) != 1 || integrity.ModeModified[0] != want {
+			t.Fatalf("ModeModified = %v, want %q", integrity.ModeModified, want)
+		}
+	})
+
 	t.Run("invalid recorded mode rejected clearly", func(t *testing.T) {
-		for _, mode := range []string{"abc", "999", "75", "4755"} {
+		for _, mode := range []string{"abc", "999", "75", "4755", "000"} {
 			t.Run("recorded "+mode, func(t *testing.T) {
-				dir, sha := setup(t, "broken.conf")
+				dir, sha := setup(t, "broken.conf", 0o600)
 				lf := NewRPackLockFile()
 				lf.AddFile("broken.conf", sha, mode)
 				_, err := lf.CheckIntegrity(dir)
@@ -450,25 +473,7 @@ func TestRPackLockFileCheckIntegrity_LegacyModes(t *testing.T) {
 				if !strings.Contains(err.Error(), "invalid mode") {
 					t.Errorf("error must clearly reject the invalid value, got: %v", err)
 				}
-				if strings.Contains(err.Error(), "requires migration") {
-					t.Errorf("invalid value must not be offered as migratable, got: %v", err)
-				}
 			})
-		}
-	})
-
-	t.Run("legacy entry blocks even when other entries are clean", func(t *testing.T) {
-		dir, sha := setup(t, "clean.txt")
-		p := filepath.Join(dir, "legacy.conf")
-		if err := os.WriteFile(p, []byte("legacy"), 0o600); err != nil { //nolint:gosec // test fixture
-			t.Fatal(err)
-		}
-		lf := NewRPackLockFile()
-		lf.AddFile("clean.txt", sha, "644")
-		lf.AddFile("legacy.conf", calculateSHA256(t, p), "600")
-		_, err := lf.CheckIntegrity(dir)
-		if err == nil || !strings.Contains(err.Error(), "requires migration") {
-			t.Fatalf("mixed lockfile with legacy entry must hard-error, got %v", err)
 		}
 	})
 }

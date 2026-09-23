@@ -646,31 +646,35 @@ rpack.write("./notes.txt", "plain")
 `
 
 // matrixScript exercises every permission declaration spelling (issue #15):
-// the executable boolean, both mode aliases, the default, an explicit
-// non-executable declaration, a reset-on-rewrite, and the chmod API.
+// the executable boolean, canonical and legacy mode aliases, the default, an
+// explicit non-executable declaration, a reset-on-rewrite, and the chmod API.
 const matrixScript = `local rpack = require("rpack.v1")
 rpack.write("./exec_bool.sh", "#!/bin/sh\n", {executable = true})
 rpack.write("./exec_mode.sh", "#!/bin/sh\n", {mode = "755"})
 rpack.write("./exec_alias.sh", "#!/bin/sh\n", {mode = "0755"})
+rpack.write("./legacy_exec.sh", "#!/bin/sh\n", {mode = "750"})
 rpack.write("./plain_alias.txt", "x", {mode = "0644"})
+rpack.write("./legacy_private.txt", "x", {mode = "600"})
 rpack.write("./nonexec.sh", "#!/bin/sh\n", {executable = false})
 rpack.write("./default.txt", "x")
 rpack.write("./reset.sh", "#!/bin/sh\n", {executable = true})
 rpack.write("./reset.sh", "y")
 rpack.write("./chmoded.sh", "#!/bin/sh\n")
-rpack.chmod("./chmoded.sh", "755")
+rpack.chmod("./chmoded.sh", "700")
 `
 
 // matrixIntent maps each matrixScript output to its canonical intent.
 var matrixIntent = map[string]string{
-	"exec_bool.sh":    "755",
-	"exec_mode.sh":    "755",
-	"exec_alias.sh":   "755",
-	"chmoded.sh":      "755",
-	"plain_alias.txt": "644",
-	"nonexec.sh":      "644",
-	"default.txt":     "644",
-	"reset.sh":        "644",
+	"exec_bool.sh":       "755",
+	"exec_mode.sh":       "755",
+	"exec_alias.sh":      "755",
+	"legacy_exec.sh":     "755",
+	"chmoded.sh":         "755",
+	"plain_alias.txt":    "644",
+	"legacy_private.txt": "644",
+	"nonexec.sh":         "644",
+	"default.txt":        "644",
+	"reset.sh":           "644",
 }
 
 // canonicalFileMode returns the canonical executable intent of path.
@@ -919,44 +923,49 @@ func TestChecker_ModeDrift(t *testing.T) {
 	}
 }
 
-// TestExecRPack_ForceDoesNotBypassLegacyModeRecord pins the migration gate
-// (issue #15): a legacy non-canonical lockfile mode record ("600")
-// hard-errors every run — including --force — with the migration hint;
-// --force can never silently rewrite a recorded permission guarantee.
-func TestExecRPack_ForceDoesNotBypassLegacyModeRecord(t *testing.T) {
+// TestExecRPack_LegacyModesCanonicalized pins the transparent upgrade path:
+// legacy lockfile modes compare by owner-execute and the next normal run
+// rewrites them to canonical 644/755 without a migration command or --force.
+func TestExecRPack_LegacyModesCanonicalized(t *testing.T) {
 	_, useDir, cfg := setupExecRPackEnv(t, chmodScript)
 	if err := runExecRPack(t, false, cfg, useDir); err != nil {
 		t.Fatalf("run1: %v", err)
 	}
 
-	// Simulate a pre-canonicalization lockfile: same content, recorded 600.
+	// Simulate a pre-canonicalization lockfile with matching executable intent.
 	modes := lockfileModes(t, useDir)
-	if modes["deploy.sh"] != "755" {
-		t.Fatalf("run1 recorded deploy.sh mode = %q, want 755", modes["deploy.sh"])
+	if modes["deploy.sh"] != "755" || modes["notes.txt"] != "644" {
+		t.Fatalf("run1 modes = %v, want canonical deploy/notes modes", modes)
 	}
 	lockPath := filepath.Join(useDir, "app.rpack.lock.yaml")
 	before, err := os.ReadFile(lockPath) //nolint:gosec // test
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := strings.Replace(string(before), "mode: \"755\"", "mode: \"600\"", 1)
-	if legacy == string(before) {
+	legacy := strings.Replace(string(before), "mode: \"755\"", "mode: \"750\"", 1)
+	legacy = strings.Replace(legacy, "mode: \"644\"", "mode: \"600\"", 1)
+	if !strings.Contains(legacy, "mode: \"750\"") || !strings.Contains(legacy, "mode: \"600\"") {
 		t.Fatalf("could not inject legacy mode into lockfile:\n%s", before)
 	}
 	writeFile(t, lockPath, legacy)
 
-	// --force must NOT bypass the legacy-mode gate.
-	forceErr := runExecRPack(t, true, cfg, useDir)
-	if forceErr == nil || !strings.Contains(forceErr.Error(), "requires migration") {
-		t.Fatalf("expected legacy-mode migration error even with force, got %v", forceErr)
+	if checkErr := (&Checker{}).CheckIntegrity(context.Background(), cfg); checkErr != nil {
+		t.Fatalf("check with legacy modes: %v", checkErr)
 	}
-	// The refused run must not have rewritten the lockfile.
-	after, readErr := os.ReadFile(lockPath) //nolint:gosec // test
-	if readErr != nil {
-		t.Fatal(readErr)
+	afterCheck, err := os.ReadFile(lockPath) //nolint:gosec // test
+	if err != nil {
+		t.Fatal(err)
 	}
-	if string(after) != legacy {
-		t.Fatalf("lockfile rewritten by refused force run:\nbefore:\n%s\nafter:\n%s", legacy, after)
+	if string(afterCheck) != legacy {
+		t.Fatal("check unexpectedly rewrote the legacy lockfile")
+	}
+
+	if err := runExecRPack(t, false, cfg, useDir); err != nil {
+		t.Fatalf("normal run with legacy modes: %v", err)
+	}
+	canonical := lockfileModes(t, useDir)
+	if canonical["deploy.sh"] != "755" || canonical["notes.txt"] != "644" {
+		t.Fatalf("legacy modes not canonicalized by normal run: %v", canonical)
 	}
 }
 

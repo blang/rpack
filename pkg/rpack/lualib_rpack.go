@@ -120,9 +120,9 @@ func (a *RPackAPI) applyOptsMode(L *lua.LState, friendly string, mode os.FileMod
 	}
 }
 
-// checkModeArg parses a required mode argument (canonical octal string
-// alias "644" or "755"). Numbers are rejected deliberately: decimal 493 is
-// unreadable, which is why the string grammar exists.
+// checkModeArg parses a required legacy-compatible octal mode argument and
+// reduces it to executable intent. Numbers are rejected deliberately: decimal
+// 493 is unreadable, which is why the string grammar exists.
 func checkModeArg(L *lua.LState, n int) os.FileMode {
 	str, ok := L.Get(n).(lua.LString)
 	if !ok {
@@ -144,8 +144,9 @@ func checkModeArg(L *lua.LState, n int) os.FileMode {
 // non-executable default).
 //
 // Rules (issue #15):
-//   - mode: a canonical octal string alias "644"/"0644"/"755"/"0755";
-//     numbers and any other value are errors.
+//   - mode: any octal string accepted by the former exact-mode contract,
+//     reduced to owner-executable/non-executable intent; numbers and values
+//     that were previously invalid remain errors.
 //   - executable: a strict boolean; true maps to ExecutableMode, false to
 //     NonExecutableMode.
 //   - mode and executable are mutually exclusive, even when they agree:

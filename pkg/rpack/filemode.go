@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 )
 
 // Mode handling for output file permissions (issue #15).
@@ -11,11 +12,10 @@ import (
 // The contract supports exactly two permission intents, mirroring Git's
 // canonical file modes: non-executable (644) and executable (755). Modes
 // cross the Lua boundary as octal strings ("755"), because Lua has no
-// octal literals and decimal 493 is unreadable. "644"/"0644" and
-// "755"/"0755" are compatibility aliases for the two intents; exact rwx
-// modes are no longer part of the contract. Below the Lua layer only
-// os.FileMode is used, and both spellings of an intent funnel through
-// fs.Chmod with the canonical mode.
+// octal literals and decimal 493 is unreadable. For backward compatibility,
+// every mode accepted by the former exact-mode contract remains valid, but
+// it is reduced to executable intent at the boundary. Below the Lua layer
+// only canonical os.FileMode values are used.
 
 const (
 	// NonExecutableMode is the canonical mode for non-executable output
@@ -42,26 +42,37 @@ var (
 	specialBitsPattern = regexp.MustCompile(`^[1-7][0-7]{3}$`)
 )
 
-// ParseOctalMode parses a declared mode string into an os.FileMode. Only
-// the canonical compatibility aliases are accepted: "644"/"0644"
-// (non-executable) and "755"/"0755" (executable). Exact rwx modes such as
-// "600" were removed from the contract (issue #15); those rejections name
-// the supported values so the fix is actionable. Special bits keep their
-// dedicated message.
+// ParseOctalMode parses a mode string using the former exact-mode grammar and
+// reduces it to canonical executable intent. This preserves existing rpack
+// definitions and lockfiles while dropping read/write bits from the contract:
+// for example, 0600 becomes NonExecutableMode and 0750 becomes ExecutableMode.
+// The historical owner-read requirement and special-bit rejection remain.
 func ParseOctalMode(s string) (os.FileMode, error) {
-	switch s {
-	case "644", "0644":
-		return NonExecutableMode, nil
-	case "755", "0755":
-		return ExecutableMode, nil
-	}
 	if specialBitsPattern.MatchString(s) {
 		return 0, fmt.Errorf("invalid mode %q: special mode bits (setuid/setgid/sticky) are not supported", s)
 	}
-	if octalModePattern.MatchString(s) {
-		return 0, fmt.Errorf("unsupported exact mode %q: only \"644\" (non-executable) and \"755\" (executable), optionally with a leading zero, are supported; use the executable option for executability", s)
+	if !octalModePattern.MatchString(s) {
+		return 0, fmt.Errorf("invalid mode %q: must be an octal string like \"755\" (3 digits, 0-7)", s)
 	}
-	return 0, fmt.Errorf("invalid mode %q: must be an octal string like \"755\" (3 digits, 0-7)", s)
+	v, err := strconv.ParseUint(s, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid mode %q: %w", s, err)
+	}
+	mode := os.FileMode(v)
+	if mode&0o400 == 0 {
+		return 0, fmt.Errorf("invalid mode %q: mode must keep the file owner-readable; rpack hashes its own outputs", s)
+	}
+	return canonicalOutputMode(mode), nil
+}
+
+// canonicalOutputMode reduces any file mode supplied through the Go filesystem
+// API to the two output intents. Lua mode strings are validated before reaching
+// this layer, while direct callers retain the old API's broad os.FileMode input.
+func canonicalOutputMode(mode os.FileMode) os.FileMode {
+	if mode.Perm()&ownerExecuteBit != 0 {
+		return ExecutableMode
+	}
+	return NonExecutableMode
 }
 
 // CanonicalMode classifies a file mode as the canonical intent string:
@@ -69,14 +80,30 @@ func ParseOctalMode(s string) (os.FileMode, error) {
 // classification consults owner-execute alone, so 0775 and 0700 are both
 // executable while 0664 and 0600 are both non-executable.
 func CanonicalMode(mode os.FileMode) string {
-	if mode.Perm()&ownerExecuteBit != 0 {
+	if canonicalOutputMode(mode) == ExecutableMode {
 		return "755"
 	}
 	return "644"
 }
 
+// modeIntent describes a canonical mode as executable intent. Diagnostics use
+// intent words, never literal local read/write bits.
+func modeIntent(mode string) string {
+	if mode == CanonicalMode(ExecutableMode) {
+		return "executable"
+	}
+	return "non-executable"
+}
+
+// modeDriftMessage formats an executable-intent drift diagnostic. Both mode
+// arguments are canonical lockfile values.
+func modeDriftMessage(path, expected, found string) string {
+	return fmt.Sprintf("%s (expected %s (%s), found %s (%s))",
+		path, modeIntent(expected), expected, modeIntent(found), found)
+}
+
 // FormatMode formats a file mode's permission bits as a raw three-digit
-// octal string for diagnostics and legacy-mode migration
+// octal string for diagnostics
 // ("644", "600", "750"). It is deliberately not the canonical intent
 // classifier — use CanonicalMode for that.
 func FormatMode(mode os.FileMode) string {

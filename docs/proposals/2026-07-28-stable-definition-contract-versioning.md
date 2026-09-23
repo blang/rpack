@@ -128,7 +128,7 @@ This rule is explicit and requires no script-content inspection. rpack never sca
 ### Before binary v1.0.0
 
 - Definition contract v1 remains unstable and may gain or change behavior.
-- File permissions become part of v1, refined while unstable by [issue #15](https://github.com/blang/rpack/issues/15) from the earlier exact-mode design to executable intent: a strict `executable` boolean on `write`/`copy`, with `mode`/`chmod` as compatibility aliases restricted to `"644"`/`"755"` (no exact modes). See [ADR 0002](../adr/0002-executable-output-intent.md).
+- File permissions become part of v1, refined while unstable by [issue #15](https://github.com/blang/rpack/issues/15) from the earlier exact-mode design to executable intent: a strict `executable` boolean on `write`/`copy`, with all previously valid `mode`/`chmod` strings retained as compatibility aliases reduced to owner-execute. See [ADR 0002](../adr/0002-executable-output-intent.md).
 - A `0.x` definition may require a sufficiently recent `0.x` binary; no forward-compatibility guarantee is made between prerelease runtimes.
 - The release notes and docs must continue to state that v1 is not frozen until binary v1.0.0.
 

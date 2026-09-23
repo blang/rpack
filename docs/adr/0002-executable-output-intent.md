@@ -11,7 +11,7 @@ rpack manages the **executable intent** of each output file and nothing else. Re
 ### Lua API
 
 - `rpack.write(path, content [, opts])` and `rpack.copy(src, dst [, opts])` take `opts.executable` (boolean, default `false`).
-- `opts.mode` is a **compatibility alias**: only `"644"`/`"0644"` (= `executable = false`) and `"755"`/`"0755"` (= `executable = true`) are accepted. Everything else (`"600"`, `"640"`, …) is rejected — there is no exact-mode feature.
+- `opts.mode` is a **backward-compatibility alias**. Every string accepted by the former exact-mode contract remains accepted (three octal digits with an optional leading zero, owner-read required, no special bits), but only owner-execute is retained: `"600"`/`"640"` become `executable = false`; `"700"`/`"750"` become `executable = true`. There is no exact-mode behavior.
 - `rpack.chmod(path, mode)` is the same compatibility alias for amending intent after a write.
 - `executable` and `mode` in one options table are contradictory and rejected.
 - Ordering rule unchanged: a write establishes its own intent (default non-executable); chmod amends until the next write to the same path.
@@ -22,6 +22,7 @@ rpack manages the **executable intent** of each output file and nothing else. Re
 
 - Executability is classified by **owner execute** (`mode & 0o100`), matching Git — not equality of all three execute bits.
 - The lockfile `mode` string field and format are unchanged; values are now always canonical `"644"` (non-executable) or `"755"` (executable). Absence of the field still means "pre-feature lockfile, mode unknown".
+- Existing noncanonical lockfile values are accepted using the same legacy grammar and owner-execute reduction. `rpack check` remains read-only; the next successful normal run writes canonical values automatically.
 - Drift is a change in owner-execute classification (recorded `"755"` but no owner-execute on disk, or vice versa). Read/write bit differences are not drift and never require `--force`.
 - No lockfile schema version bump: a pre-`v1.0.0` contract change; `Validate()` hard-rejects unknown versions and the field was already additive.
 
@@ -52,18 +53,19 @@ For regular files, Git records two canonical modes — `100644` (non-executable)
 
 Verified manually on Linux with Git `2.55.0` against rpack `dev` built from `c4383a6`; issue #15 preserves the full matrix, reproduction commands, and the drift messages observed at the exact-mode baseline. Every row is one Git-tracked state, but under ADR 0001 each cell was a different lockfile mode, and all of them — including the defaults `644`/`755` — reported drift after a Git round trip under a non-`022` umask. Under this ADR all cells in a row compare equal: executable intent survives Git checkouts, clones, and editor replacements; read/write bits belong to the destination machine.
 
-## Migration: `rpack migrate-modes`
+## Compatibility and canonicalization
 
-- `rpack migrate-modes --acknowledge-permission-change <config>` (optional local `--working-dir`/`-w`); there is deliberately no `--force`.
-- It rewrites **only non-canonical legacy mode metadata** in the lockfile, using the recorded owner-execute bit (`"600"` → `"644"`, `"700"` → `"755"`, `"664"` → `"644"`, …). Common old `"644"`/`"755"` entries are reinterpreted automatically and need no migration.
-- It validates all recorded content, executable state, and file existence first; any conflict aborts without rewriting. It performs no chmod and makes no target-file changes.
-- Entries without a recorded mode stay unknown until the next generation rewrites them.
-- Definitions still requesting rejected modes (`"600"`, …) fail and must change deliberately — private or deployment permissions belong to external permission management applied outside rpack.
-- Downgrade caveat: an old binary still strict-compares full rwx modes against the `mode` strings, so a migrated lockfile can report mode drift under an old runtime, and an old runtime's successful next run rewrites entries with its own full modes, undoing the migration. Do not mix binaries across a migration; accepted for `0.x` (issue #15).
+- No migration command or acknowledgment is required. Existing definitions and lockfiles continue to parse under the old grammar and are interpreted by owner-execute.
+- Content and executable drift checks remain active. Read/write-only differences are accepted because they are no longer part of the managed contract.
+- A successful normal run writes canonical `"644"`/`"755"` lockfile values derived from the definition's executable intent. `rpack check` does not mutate the lockfile.
+- Entries without a recorded mode stay unknown until the next generation writes them.
+- Definitions do not need a syntax migration, but authors should move to `executable` for clarity. A legacy `mode = "600"` no longer guarantees privacy; it means only non-executable.
+- Downgrade caveat: an old binary still interprets the canonical lockfile strings as exact rwx modes and can report drift under a non-`022` umask. Coordinate binary versions despite the unchanged serialization.
 
 ## Considered options
 
 - **Exact modes with an explicit opt-in (the investigation's hybrid recommendation)** — rejected: two permission models, per-file policy metadata, provenance tracking in the lockfile, and doubled migration surface; exact modes recreate the Git/umask conflict for every definition that uses them.
+- **Require an explicit migration for old definitions or lockfiles** — rejected: the old mode grammar maps deterministically to owner-execute, so a migration gate would unnecessarily break definitions and normal runs that can be interpreted safely.
 - **Keep the ADR 0001 exact-mode contract** — rejected: documented caveats and `--force` did not resolve the competing policies; even the defaults drifted under normal umasks.
 - **Stop tracking permissions entirely, keep chmod on generation** — rejected: a lost executable flag becomes invisible.
 - **Ignore individual bits (e.g., group-write)** — rejected: an arbitrary exception list is not a permission model.
@@ -75,4 +77,4 @@ Verified manually on Linux with Git `2.55.0` against rpack `dev` built from `c43
 - Adding or removing owner-execute externally remains detected; group/other execute differences alone do not change classification.
 - rpack no longer guarantees — or overwrites — read/write bits on outputs. Replacement recreates the file, so its read/write bits are recomputed from the current creation policy (umask, default ACLs), not preserved: a `0600` checkout does not stay `0600` across regeneration. Only executable intent is tracked and verified.
 - Documentation, Lua stubs, the executable example, and the author/tester skills move to `executable = true`, with `mode` described as an intent alias rather than a literal chmod.
-- **Acceptance coverage** (implemented for issue #15): mode-alias parser and mutual-exclusion tests in `filemode_test.go`/`lualib_rpack_test.go` (accept `644`/`755` and leading zeros; reject other modes and the `mode`+`executable` combination); owner-execute classification and drift tests; creation-base and destination-parent publication tests in `materialize_test.go` (including replace-without-inheritance, refusal paths that preserve existing files, and dry-run intent display); reset-on-write ordering and temp non-propagation tests in `chmod_test.go`; umask coverage in `permission_umask_test.go` (child-process umask matrix across output paths, staging privacy under zero umask, fail-before-publish refusal under `0100`/`0400`, Git round-trip drift acceptance); `migrate-modes` tests in `modemigration_test.go` (rewrite, validation-abort, unknown-mode passthrough). The default-ACL flow is covered by an optional test that skips when `setfacl` is unavailable or the filesystem rejects ACLs — it is not claimed to run everywhere.
+- **Acceptance coverage** (implemented for issue #15): backward-compatible mode parsing and canonical reduction in `filemode_test.go`/`lualib_rpack_test.go`; transparent legacy-lockfile comparison and normal-run canonicalization in `rpack_test.go`/`executor_test.go`; owner-execute classification and drift tests; creation-base and destination-parent publication tests in `materialize_test.go` (including replace-without-inheritance, refusal paths that preserve existing files, and dry-run intent display); reset-on-write ordering and temp non-propagation tests in `chmod_test.go`; umask coverage in `permission_umask_test.go` (child-process umask matrix across output paths, staging privacy under zero umask, fail-before-publish refusal under `0100`/`0400`, Git round-trip drift acceptance). The default-ACL flow is covered by an optional test that skips when `setfacl` is unavailable or the filesystem rejects ACLs — it is not claimed to run everywhere.

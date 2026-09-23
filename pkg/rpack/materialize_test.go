@@ -223,10 +223,10 @@ func TestMoveFiles_InvalidIntentExistingPreserved(t *testing.T) {
 	preCreateStaged(t, dest, 0o755)
 
 	files := []*ControlledFile{{Path: "deploy.sh", AbsPath: staged}}
-	modes := map[string]string{staged: "600"} // legacy exact mode: unsupported
+	modes := map[string]string{staged: "invalid"}
 	err := moveFiles(files, execPath, modes)
-	if err == nil || !strings.Contains(err.Error(), `unsupported exact mode "600"`) {
-		t.Fatalf("want unsupported exact mode refusal, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `invalid mode "invalid"`) {
+		t.Fatalf("want invalid mode refusal, got %v", err)
 	}
 	if got, rerr := os.ReadFile(dest); rerr != nil || string(got) != "old" { //nolint:gosec // test
 		t.Fatalf("existing destination damaged: content %q, err %v", got, rerr)

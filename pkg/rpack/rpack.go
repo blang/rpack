@@ -148,15 +148,13 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 	res := &RPackLockFileIntegrity{}
 	cleanBase := filepath.Clean(path)
 	for _, file := range f.Files {
-		// Recorded modes must be canonical executable-intent records
-		// ("644"/"755") or empty (unknown, pre-feature entry). Legacy
-		// non-canonical records are pre-migration lockfile state and
-		// hard-error with a migration hint: this is deliberately not
-		// drift-classified, so --force cannot silently rewrite a recorded
-		// permission guarantee (issue #15). Invalid values are rejected
-		// with a clear message; YAML decoding itself never fails on them.
-		if err := checkRecordedMode(file.Mode); err != nil {
-			return nil, fmt.Errorf("lockfile entry %s: %w", file.Path, err)
+		var expected string
+		if file.Mode != "" {
+			expectedMode, err := ParseOctalMode(file.Mode)
+			if err != nil {
+				return nil, fmt.Errorf("lockfile entry %s has invalid recorded mode: %w", file.Path, err)
+			}
+			expected = CanonicalMode(expectedMode)
 		}
 		filePath := filepath.Join(cleanBase, file.Path)
 		if err := util.CheckFileExists(filePath); err != nil {
@@ -187,8 +185,8 @@ func (f *RPackLockFile) CheckIntegrity(path string) (*RPackLockFileIntegrity, er
 		// Compare executable intent, not literal rwx bits: read/write
 		// differences from local policy (umask, ACLs) are not drift, a
 		// changed owner-execute bit is (issue #15).
-		if onDisk := CanonicalMode(info.Mode()); onDisk != file.Mode {
-			res.ModeModified = append(res.ModeModified, modeDriftMessage(file.Path, file.Mode, onDisk))
+		if onDisk := CanonicalMode(info.Mode()); onDisk != expected {
+			res.ModeModified = append(res.ModeModified, modeDriftMessage(file.Path, expected, onDisk))
 		}
 	}
 	return res, nil

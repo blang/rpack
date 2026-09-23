@@ -13,8 +13,8 @@ echo "Hello from {{.name}}"
 rpack.write("./hello.sh", script, { executable = true })
 
 -- Compatibility alias: `{ mode = "755" }` means the same as
--- `{ executable = true }` ("644" means non-executable). It is an intent
--- alias, not a literal chmod — exact modes like "600" are rejected.
+-- `{ executable = true }`. Older values remain valid (`"600"` means
+-- non-executable; `"750"` means executable), but read/write bits are ignored.
 -- A write resets intent to non-executable, so declare with the final
 -- write, or `rpack.chmod(path, "755")` after it.
 rpack.write("./goodbye.sh", "#!/bin/sh\necho bye\n", { mode = "755" })

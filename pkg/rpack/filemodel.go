@@ -169,10 +169,7 @@ func (fs *InMemoryFS) Chmod(name string, mode os.FileMode) error {
 	if entry.IsDir {
 		return fmt.Errorf("cannot chmod %s: chmod on directories is not supported", name)
 	}
-	if err := validateOutputMode(mode); err != nil {
-		return err
-	}
-	entry.Mode = mode
+	entry.Mode = canonicalOutputMode(mode)
 	return nil
 }
 func (fs *InMemoryFS) Read(name string) ([]byte, error) {
@@ -271,9 +268,7 @@ func (fs *BaseFS) Chmod(name string, mode os.FileMode) error {
 	if dir {
 		return fmt.Errorf("cannot chmod %s: chmod on directories is not supported", handle.FriendlyPath())
 	}
-	if err := validateOutputMode(mode); err != nil {
-		return err
-	}
+	mode = canonicalOutputMode(mode)
 	for _, hook := range fs.Hooks {
 		if err := hook.Write(handle); err != nil {
 			return err

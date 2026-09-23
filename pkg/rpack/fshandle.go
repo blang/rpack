@@ -91,9 +91,6 @@ func (f *FileBackedFSHandle) Write(b []byte) error {
 // Chmod amends metadata only. Final creation applies the caller's umask to the
 // appropriate Git-style base mode; staging never needs to become executable.
 func (f *FileBackedFSHandle) Chmod(mode os.FileMode) error {
-	if err := validateOutputMode(mode); err != nil {
-		return err
-	}
 	info, err := os.Stat(f.absPath)
 	if err != nil {
 		return fmt.Errorf("could not chmod %s: %w", f.friendlyPath, err)
@@ -101,7 +98,7 @@ func (f *FileBackedFSHandle) Chmod(mode os.FileMode) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("cannot chmod %s: not a regular file", f.friendlyPath)
 	}
-	f.outputMode = mode
+	f.outputMode = canonicalOutputMode(mode)
 	return nil
 }
 

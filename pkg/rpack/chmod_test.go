@@ -87,7 +87,7 @@ func TestFileBackedFSHandleWrite_TempAlsoPrivate(t *testing.T) {
 }
 
 // TestBaseFSChmod covers the BaseFS.Chmod contract (ADR 0002): metadata-only
-// intent declaration, recorded-as-Write, canonical-mode validation, and
+// intent declaration, recorded-as-Write, legacy-mode reduction, and
 // resolver refusals. Physical staging permissions never change.
 //
 //nolint:gocognit,gocyclo // test: table of independent subtest scenarios
@@ -168,27 +168,22 @@ func TestBaseFSChmod(t *testing.T) {
 		}
 	})
 
-	t.Run("unsupported exact modes refused with zero residue", func(t *testing.T) {
+	t.Run("legacy Go modes reduce to executable intent", func(t *testing.T) {
 		fs, runDir, _ := newTestRPackFS(t)
 		if err := fs.Write("./f.sh", []byte("x")); err != nil {
 			t.Fatal(err)
 		}
-		if err := fs.Chmod("./f.sh", ExecutableMode); err != nil {
-			t.Fatal(err)
-		}
-		// The pre-issue-15 exact modes are refused by the Go API too.
-		for _, mode := range []os.FileMode{0o600, 0o700, 0o777} {
-			err := fs.Chmod("./f.sh", mode)
-			if err == nil || !strings.Contains(err.Error(), "unsupported output mode") {
-				t.Fatalf("mode %o: want unsupported-output-mode refusal, got %v", mode, err)
+		for mode, want := range map[os.FileMode]string{0o600: "644", 0o700: "755", 0o777: "755"} {
+			if err := fs.Chmod("./f.sh", mode); err != nil {
+				t.Fatalf("mode %o: %v", mode, err)
+			}
+			if got := resolvedIntent(t, fs, "./f.sh"); got != want {
+				t.Fatalf("mode %o: intent = %q, want %q", mode, got, want)
 			}
 		}
-		// Refusals are metadata-only: staging, intent, and records unchanged.
+		// Intent changes remain metadata-only: staging stays private.
 		if got := stagedMode(t, filepath.Join(runDir, "f.sh")); got != 0o600 {
-			t.Fatalf("staged mode after refusals = %o, want 600", got)
-		}
-		if got := resolvedIntent(t, fs, "./f.sh"); got != "755" {
-			t.Fatalf("intent after refusals = %q, want 755 (last success wins)", got)
+			t.Fatalf("staged mode after declarations = %o, want 600", got)
 		}
 		writes := 0
 		for _, h := range fs.TargetWriteHandles() {
@@ -196,8 +191,8 @@ func TestBaseFSChmod(t *testing.T) {
 				writes++
 			}
 		}
-		if writes != 2 { // one write + one successful chmod; refusals add none
-			t.Fatalf("target write records for f.sh = %d, want 2 (zero residue)", writes)
+		if writes != 4 { // one write plus three successful declarations
+			t.Fatalf("target write records for f.sh = %d, want 4", writes)
 		}
 	})
 
@@ -344,9 +339,9 @@ func TestBaseFSChmod_PurityConflict(t *testing.T) {
 	})
 }
 
-// TestInMemoryFSChmod pins the test-double contract: canonical mode tracked
-// per entry, write resets, missing/directory/unsupported-mode errors mirror
-// BaseFS.Chmod's behavior.
+// TestInMemoryFSChmod pins the test-double contract: canonical intent tracked
+// per entry, legacy modes reduced, write resets, and missing/directory errors
+// mirror BaseFS.Chmod's behavior.
 //
 //nolint:gocyclo // test: linear scenario sequence
 func TestInMemoryFSChmod(t *testing.T) {
@@ -363,15 +358,18 @@ func TestInMemoryFSChmod(t *testing.T) {
 	if fs.Tree["f.sh"].Mode != ExecutableMode {
 		t.Fatalf("mode after chmod = %o, want 755", fs.Tree["f.sh"].Mode)
 	}
-	// Unsupported exact modes are refused like on the real FS.
-	if err := fs.Chmod("f.sh", 0o600); err == nil || !strings.Contains(err.Error(), "unsupported output mode") {
-		t.Fatalf("want unsupported-output-mode refusal, got %v", err)
+	// Legacy exact modes are reduced like on the real FS.
+	if err := fs.Chmod("f.sh", 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := fs.Chmod("f.sh", 0o700); err == nil || !strings.Contains(err.Error(), "unsupported output mode") {
-		t.Fatalf("want unsupported-output-mode refusal, got %v", err)
+	if fs.Tree["f.sh"].Mode != NonExecutableMode {
+		t.Fatalf("legacy 600 mode = %o, want canonical 644 intent", fs.Tree["f.sh"].Mode)
+	}
+	if err := fs.Chmod("f.sh", 0o700); err != nil {
+		t.Fatal(err)
 	}
 	if fs.Tree["f.sh"].Mode != ExecutableMode {
-		t.Fatalf("mode after refusals = %o, want 755 (refusal is metadata-only)", fs.Tree["f.sh"].Mode)
+		t.Fatalf("legacy 700 mode = %o, want canonical 755 intent", fs.Tree["f.sh"].Mode)
 	}
 	if err := fs.Write("f.sh", []byte("y")); err != nil {
 		t.Fatal(err)

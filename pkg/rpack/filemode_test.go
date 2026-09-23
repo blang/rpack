@@ -1,24 +1,33 @@
 package rpack
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 )
 
-// TestParseOctalMode pins the declared-mode grammar (issue #15): only the
-// canonical compatibility aliases "644"/"0644" (non-executable) and
-// "755"/"0755" (executable) are accepted. Exact rwx modes, special bits,
-// and non-octal shapes are all rejected.
+// TestParseOctalMode pins backward-compatible parsing: every value accepted by
+// the former exact-mode contract is reduced to canonical executable intent.
 func TestParseOctalMode(t *testing.T) {
 	accept := []struct {
 		input string
 		want  os.FileMode
 	}{
+		{"400", NonExecutableMode},
+		{"0444", NonExecutableMode},
+		{"600", NonExecutableMode},
+		{"0600", NonExecutableMode},
+		{"640", NonExecutableMode},
 		{"644", NonExecutableMode},
 		{"0644", NonExecutableMode},
+		{"664", NonExecutableMode},
+		{"500", ExecutableMode},
+		{"0700", ExecutableMode},
+		{"750", ExecutableMode},
 		{"755", ExecutableMode},
 		{"0755", ExecutableMode},
+		{"777", ExecutableMode},
 	}
 	for _, tc := range accept {
 		t.Run("accept/"+tc.input, func(t *testing.T) {
@@ -33,8 +42,8 @@ func TestParseOctalMode(t *testing.T) {
 	}
 
 	reject := []string{
-		// Exact rwx modes removed from the contract (issue #15)
-		"600", "0600", "700", "750", "777", "0777", "400", "444", "664", "000",
+		// Owner-unreadable modes were already rejected by the old contract.
+		"000", "044", "100", "0377",
 		// Special bits
 		"1755", "4755", "7777",
 		// Malformed
@@ -51,14 +60,36 @@ func TestParseOctalMode(t *testing.T) {
 	}
 }
 
+// TestParseOctalMode_PreservesFormerGrammar exhaustively covers all 000-777
+// values, with and without the old optional leading zero. Every owner-readable
+// value accepted by the exact-mode implementation must remain accepted.
+func TestParseOctalMode_PreservesFormerGrammar(t *testing.T) {
+	for raw := 0; raw <= 0o777; raw++ {
+		for _, input := range []string{fmt.Sprintf("%03o", raw), fmt.Sprintf("0%03o", raw)} {
+			got, err := ParseOctalMode(input)
+			if os.FileMode(raw)&0o400 == 0 {
+				if err == nil {
+					t.Fatalf("ParseOctalMode(%q) = %o, want historical owner-read rejection", input, got)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatalf("ParseOctalMode(%q) broke backward compatibility: %v", input, err)
+			}
+			want := canonicalOutputMode(os.FileMode(raw))
+			if got != want {
+				t.Fatalf("ParseOctalMode(%q) = %o, want canonical intent %o", input, got, want)
+			}
+		}
+	}
+}
+
 func TestParseOctalModeErrorMessages(t *testing.T) {
-	// Unsupported exact modes are actionable: they name the offending value
-	// and the supported canonical modes.
-	if _, err := ParseOctalMode("600"); err == nil ||
-		!strings.Contains(err.Error(), `"600"`) ||
-		!strings.Contains(err.Error(), `"644"`) ||
-		!strings.Contains(err.Error(), `"755"`) {
-		t.Fatalf("600: want actionable unsupported-mode message, got %v", err)
+	// The historical owner-read constraint remains actionable.
+	if _, err := ParseOctalMode("000"); err == nil ||
+		!strings.Contains(err.Error(), `"000"`) ||
+		!strings.Contains(err.Error(), "owner-readable") {
+		t.Fatalf("000: want actionable owner-readable message, got %v", err)
 	}
 	// The special-bits shape gets its dedicated message, not the generic one.
 	if _, err := ParseOctalMode("1755"); err == nil ||

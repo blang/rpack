@@ -285,13 +285,18 @@ func TestRPackAPIChmod(t *testing.T) {
 	})
 	script := `
 		write("deploy.sh", "#!/bin/sh\n")
-		chmod("deploy.sh", "755")
+		chmod("deploy.sh", "750")
+		write("private.txt", "secret")
+		chmod("private.txt", "600")
 	`
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
 	}
 	if fs.Tree["deploy.sh"].Mode != 0o755 {
 		t.Fatalf("mode = %o, want 755", fs.Tree["deploy.sh"].Mode)
+	}
+	if fs.Tree["private.txt"].Mode != NonExecutableMode {
+		t.Fatalf("legacy 600 mode = %o, want canonical non-executable intent", fs.Tree["private.txt"].Mode)
 	}
 }
 
@@ -305,9 +310,7 @@ func TestRPackAPIChmodErrors(t *testing.T) {
 		{"non-string mode", `chmod("f", 493)`, `mode must be an octal string like "755"`},
 		{"invalid octal", `chmod("f", "88x")`, `invalid mode "88x"`},
 		{"special bits", `chmod("f", "1755")`, "special mode bits"},
-		{"exact mode removed", `chmod("f", "600")`, `unsupported exact mode "600"`},
-		{"owner-unreadable now unsupported", `chmod("f", "000")`, `unsupported exact mode "000"`},
-		{"world-writable unsupported", `chmod("f", "777")`, `unsupported exact mode "777"`},
+		{"owner-unreadable", `chmod("f", "000")`, "owner-readable"},
 		{"directory", `chmod("adir", "755")`, "directories is not supported"},
 	}
 	for _, tc := range tests {
@@ -324,10 +327,9 @@ func TestRPackAPIChmodErrors(t *testing.T) {
 	}
 }
 
-// TestRPackAPIWriteWithModeOpt pins the issue #15 option surface: mode is a
-// canonical alias, executable is a strict boolean, and both resolve to the
-// same two canonical modes. The default (no options or empty table) is the
-// non-executable mode established by the write's own reset.
+// TestRPackAPIWriteWithModeOpt pins the issue #15 option surface: legacy mode
+// values remain accepted but reduce to canonical intent, executable is a
+// strict boolean, and the default is non-executable.
 func TestRPackAPIWriteWithModeOpt(t *testing.T) {
 	fs := NewInMemoryFS()
 	api := NewRPackAPI(fs)
@@ -338,6 +340,10 @@ func TestRPackAPIWriteWithModeOpt(t *testing.T) {
 		write("exec.sh", "#!/bin/sh\n", {executable = true})
 		write("plain.txt", "hi", {mode = "644"})
 		write("zero.txt", "hi", {mode = "0644"})
+		write("legacy-private.txt", "hi", {mode = "600"})
+		write("legacy-group.txt", "hi", {mode = "664"})
+		write("legacy-exec.sh", "#!/bin/sh\n", {mode = "750"})
+		write("legacy-wide.sh", "#!/bin/sh\n", {mode = "777"})
 		write("noexec.sh", "#!/bin/sh\n", {executable = false})
 		write("noop.txt", "hi", {})
 		write("default.txt", "hi")
@@ -345,13 +351,13 @@ func TestRPackAPIWriteWithModeOpt(t *testing.T) {
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
 	}
-	executable := []string{"deploy.sh", "alias.sh", "exec.sh"}
+	executable := []string{"deploy.sh", "alias.sh", "exec.sh", "legacy-exec.sh", "legacy-wide.sh"}
 	for _, name := range executable {
 		if got := fs.Tree[name].Mode; got != ExecutableMode {
 			t.Errorf("%s mode = %o, want 755", name, got)
 		}
 	}
-	nonExecutable := []string{"plain.txt", "zero.txt", "noexec.sh", "noop.txt", "default.txt"}
+	nonExecutable := []string{"plain.txt", "zero.txt", "legacy-private.txt", "legacy-group.txt", "noexec.sh", "noop.txt", "default.txt"}
 	for _, name := range nonExecutable {
 		if got := fs.Tree[name].Mode; got != NonExecutableMode {
 			t.Errorf("%s mode = %o, want 644", name, got)
@@ -377,12 +383,14 @@ func TestRPackAPICopyWithModeOpt(t *testing.T) {
 		copy("src.sh", "exec.sh", {executable = true})
 		copy("src.sh", "plain.sh", {executable = false})
 		copy("src.sh", "noexec.txt", {mode = "644"})
+		copy("src.sh", "legacy-private.txt", {mode = "600"})
+		copy("src.sh", "legacy-exec.sh", {mode = "750"})
 		copy("src.sh", "default.sh")
 	`
 	if err := L.DoString(script); err != nil {
 		t.Fatalf("Script failed: %s", err)
 	}
-	for _, name := range []string{"dst.sh", "alias.sh", "exec.sh"} {
+	for _, name := range []string{"dst.sh", "alias.sh", "exec.sh", "legacy-exec.sh"} {
 		e := fs.Tree[name]
 		if string(e.Content) != "#!/bin/sh\n" {
 			t.Errorf("%s content = %q", name, e.Content)
@@ -391,7 +399,7 @@ func TestRPackAPICopyWithModeOpt(t *testing.T) {
 			t.Errorf("%s mode = %o, want 755", name, e.Mode)
 		}
 	}
-	for _, name := range []string{"plain.sh", "noexec.txt", "default.sh"} {
+	for _, name := range []string{"plain.sh", "noexec.txt", "legacy-private.txt", "default.sh"} {
 		if got := fs.Tree[name].Mode; got != NonExecutableMode {
 			t.Errorf("%s mode = %o, want 644 (no source-mode inheritance)", name, got)
 		}
@@ -399,8 +407,8 @@ func TestRPackAPICopyWithModeOpt(t *testing.T) {
 }
 
 // TestRPackAPIOptsErrors pins option validation: unknown keys, wrong types,
-// removed exact modes, and mode/executable mutual exclusion — all rejected
-// before any file is written.
+// historically invalid modes, and mode/executable mutual exclusion are all
+// rejected before any file is written.
 func TestRPackAPIOptsErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -411,7 +419,7 @@ func TestRPackAPIOptsErrors(t *testing.T) {
 		{"unknown key executable typo", `write("f", "x", {executabel = true})`, `unknown option "executabel" (known: executable, mode)`},
 		{"non-string mode", `write("f", "x", {mode = 493})`, `mode must be an octal string like "755"`},
 		{"invalid mode value", `write("f", "x", {mode = "999"})`, `invalid mode "999"`},
-		{"exact mode removed", `write("f", "x", {mode = "600"})`, `unsupported exact mode "600"`},
+		{"owner-unreadable mode", `write("f", "x", {mode = "000"})`, "owner-readable"},
 		{"non-bool executable string", `write("f", "x", {executable = "true"})`, "executable must be a boolean"},
 		{"non-bool executable number", `write("f", "x", {executable = 1})`, "executable must be a boolean"},
 		{"mode and executable", `write("f", "x", {mode = "755", executable = true})`, "mutually exclusive"},
@@ -446,9 +454,9 @@ func TestRPackAPICopyOptsErrorBeforeMutation(t *testing.T) {
 	}
 	api := NewRPackAPI(fs)
 	L := newLuaTestAPI(t, fs, map[string]lua.LGFunction{"copy": api.luaCopy})
-	err := L.DoString(`copy("src.txt", "dst.txt", {mode = "600"})`)
-	if err == nil || !strings.Contains(err.Error(), `unsupported exact mode "600"`) {
-		t.Fatalf("want unsupported exact mode error, got %v", err)
+	err := L.DoString(`copy("src.txt", "dst.txt", {mode = "000"})`)
+	if err == nil || !strings.Contains(err.Error(), "owner-readable") {
+		t.Fatalf("want owner-readable mode error, got %v", err)
 	}
 	if _, exists := fs.Tree["dst.txt"]; exists {
 		t.Fatal("copy staged the target before rejecting invalid options")

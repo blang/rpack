@@ -244,7 +244,7 @@ rpack.copy("rpack:files/setup.sh", "./setup.sh", { mode = "755" })
 ```
 
 **Key points:**
-- Exact permission modes are NOT supported — `mode`/`chmod` accept only `"644"`/`"755"` (with optional leading zeros) as aliases for non-executable/executable intent
+- Exact permission behavior is NOT supported. Legacy `mode`/`chmod` values remain accepted for backward compatibility but are reduced to owner-execute (`"600"` = non-executable, `"750"` = executable); prefer `executable` in new definitions
 - A write resets intent to non-executable; declare with the final write, or `rpack.chmod(path, "755")` after it
 - `executable` and `mode` in the same options table are rejected
 - Chmod on a `temp:` file never propagates through a later `copy` — the copy's own options decide
@@ -345,7 +345,7 @@ Scripts access files through four prefixes. Understanding these is critical:
 
 8. **Schema validates the wrong thing.** The schema validates `values` (user config), not the content of template files or output files. Don't try to validate generated content in CUE.
 
-9. **Using `mode = "600"` for private files.** rpack manages only executable intent; `mode`/`chmod` accept only `"644"`/`"755"` as intent aliases (not literal chmod). Exact modes are rejected — apply private or deployment permissions with external tooling instead.
+9. **Expecting `mode = "600"` to make a file private.** The legacy syntax remains valid, but rpack now interprets it only as non-executable intent; read/write bits follow local creation policy. Apply private or deployment permissions with external tooling instead.
 
 ## Validation Checklist
 

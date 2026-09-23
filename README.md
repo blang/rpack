@@ -171,7 +171,7 @@ Scripts are pure: same inputs always produce the same output bytes and the same 
 
 ### Output file permissions
 
-rpack manages each output file's **executable intent**, not its exact permission mode. `rpack.write`/`rpack.copy` accept `{ executable = true }` (default `false`); `rpack.chmod(path, mode)` declares intent after the last write to a path — a write always resets the intent to non-executable. For compatibility, `mode`/`chmod` accept only `"644"`/`"755"` (leading zeros allowed) as aliases for non-executable/executable intent; exact modes like `"600"` are rejected — manage private or deployment permissions outside rpack.
+rpack manages each output file's **executable intent**, not its exact permission mode. `rpack.write`/`rpack.copy` accept `{ executable = true }` (default `false`); `rpack.chmod(path, mode)` declares intent after the last write to a path — a write always resets the intent to non-executable. For backward compatibility, every mode string accepted by the former exact-mode API remains valid, but only its owner-execute bit is used: for example, `"600"`/`"664"` mean non-executable and `"700"`/`"750"` mean executable. New definitions should use `executable`; read/write permissions are local policy rather than an rpack guarantee.
 
 Files are created like git checkouts: base `0666`/`0777` restricted by the OS umask, so the same rpack produces `0644`/`0755` under umask `022` and `0600`/`0700` under umask `077`. Replaced files are recreated — rpack does not preserve or promise local read/write bits on replacement. If local policy would strip owner-read or the declared owner-execute bit, the affected file is never published; the run refuses (under masks that deny directory search, e.g. `0100`, the failure may surface earlier during staging — the guarantee is no publication, not a specific error message). Only the owner-execute bit is tracked; ownership, ACLs, and special bits are not managed, and directories are not tracked.
 
@@ -179,7 +179,7 @@ Git records the executable bit too: read/write differences introduced by clones 
 
 ### Lockfiles
 
-After execution, rpack writes a lockfile tracking all output files with SHA256 checksums and executable intent (recorded as canonical mode strings `"644"`/`"755"`). On subsequent runs, rpack verifies that managed files haven't been modified externally — content changes and executable-state changes are both detected (read/write bit differences are not). Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
+After execution, rpack writes a lockfile tracking all output files with SHA256 checksums and executable intent (recorded as canonical mode strings `"644"`/`"755"`). Existing lockfiles containing older full modes are accepted automatically and interpreted by owner-execute (`"600"` → non-executable, `"750"` → executable); the next successful `rpack run` writes canonical values. On subsequent runs, rpack verifies that managed files haven't been modified externally — content changes and executable-state changes are both detected (read/write bit differences are not). Use `--force` to override. Files removed from the lockfile are cleaned up automatically.
 
 ## Configuration
 
@@ -337,17 +337,6 @@ Verify lockfile integrity — checks that all managed files exist and haven't be
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--working-dir` | `-w` | Override working directory |
-
-### `rpack migrate-modes --acknowledge-permission-change <config>`
-
-Migrate a lockfile recorded under the earlier exact-mode contract to executable-intent metadata ([issue #15](https://github.com/blang/rpack/issues/15)). Rewrites non-canonical legacy `mode` strings in the lockfile using the recorded owner-execute bit (`"600"` → `"644"`, `"700"` → `"755"`); canonical `"644"`/`"755"` entries are reinterpreted automatically and need no migration. Validates all recorded content, executable state, and file existence first, and aborts without rewriting on any conflict. Never changes file permissions or target files; entries without a recorded mode stay unknown until the next `rpack run`.
-
-There is no `--force` option: acknowledgment only relinquishes exact read/write permission tracking. Definitions still requesting exact modes must be updated separately. Older binaries still compare full permissions, so coordinate upgrades rather than mixing permission models.
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--acknowledge-permission-change` | | Required: confirms the permission-semantics change ([issue #15](https://github.com/blang/rpack/issues/15)) |
 | `--working-dir` | `-w` | Override working directory |
 
 ### `rpack test --def <dir> [--filter <name>] [--init <name>] [--strict]`
